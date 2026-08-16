@@ -61,7 +61,7 @@
 			var startY = 0;
 
 			function updateTransform() {
-				canvas.style.transform = 'translate(' + panX + 'px, ' + panY + 'px) scale(' + scale + ')';
+				canvas.style.transform = 'translate(-50%, -50%) translate(' + panX + 'px, ' + panY + 'px) scale(' + scale + ')';
 				zoomResetBtn.textContent = Math.round(scale * 100) + '%';
 			}
 
@@ -76,18 +76,18 @@
 			document.addEventListener('keydown', function (e) {
 				if (!modal.classList.contains('active')) return;
 				if (e.key === 'Escape') closeModal();
-				if (e.key === '+' || e.key === '=') { scale = Math.min(scale * 1.2, 5); updateTransform(); }
-				if (e.key === '-' || e.key === '_') { scale = Math.max(scale / 1.2, 0.3); updateTransform(); }
+				if (e.key === '+' || e.key === '=') { scale = Math.min(scale * 1.25, 6); updateTransform(); }
+				if (e.key === '-' || e.key === '_') { scale = Math.max(scale / 1.25, 0.2); updateTransform(); }
 				if (e.key === '0') { scale = 1; panX = 0; panY = 0; updateTransform(); }
 			});
 
 			zoomInBtn.addEventListener('click', function () {
-				scale = Math.min(scale * 1.25, 5);
+				scale = Math.min(scale * 1.25, 6);
 				updateTransform();
 			});
 
 			zoomOutBtn.addEventListener('click', function () {
-				scale = Math.max(scale / 1.25, 0.3);
+				scale = Math.max(scale / 1.25, 0.2);
 				updateTransform();
 			});
 
@@ -98,7 +98,7 @@
 				updateTransform();
 			});
 
-			// Mouse wheel zoom
+			// Mouse wheel zoom centered at cursor
 			viewport.addEventListener('wheel', function (e) {
 				e.preventDefault();
 				var rect = viewport.getBoundingClientRect();
@@ -106,7 +106,7 @@
 				var mouseY = e.clientY - rect.top - rect.height / 2;
 
 				var zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
-				var newScale = Math.min(Math.max(scale * zoomFactor, 0.3), 6);
+				var newScale = Math.min(Math.max(scale * zoomFactor, 0.2), 6);
 
 				panX = mouseX - (mouseX - panX) * (newScale / scale);
 				panY = mouseY - (mouseY - panY) * (newScale / scale);
@@ -168,7 +168,7 @@
 						e.touches[0].clientX - e.touches[1].clientX,
 						e.touches[0].clientY - e.touches[1].clientY
 					);
-					scale = Math.min(Math.max(initialScale * (dist / initialDistance), 0.3), 6);
+					scale = Math.min(Math.max(initialScale * (dist / initialDistance), 0.2), 6);
 					updateTransform();
 				}
 			}, { passive: true });
@@ -181,18 +181,45 @@
 			modal._openWithSvg = function (svg) {
 				canvas.innerHTML = '';
 				var clone = svg.cloneNode(true);
-				clone.style.maxWidth = 'none';
-				clone.style.width = 'auto';
-				clone.style.height = 'auto';
-				canvas.appendChild(clone);
 
-				scale = 1;
-				panX = 0;
-				panY = 0;
-				updateTransform();
+				var vb = svg.getAttribute('viewBox');
+				var naturalW = 800;
+				var naturalH = 400;
+				if (vb) {
+					var parts = vb.trim().split(/[\s,]+/).map(parseFloat);
+					if (parts.length >= 4 && parts[2] > 0 && parts[3] > 0) {
+						naturalW = parts[2];
+						naturalH = parts[3];
+					}
+				} else {
+					var b = svg.getBoundingClientRect();
+					if (b.width > 0) naturalW = b.width;
+					if (b.height > 0) naturalH = b.height;
+				}
+
+				clone.removeAttribute('style');
+				clone.setAttribute('width', naturalW);
+				clone.setAttribute('height', naturalH);
+				clone.style.width = naturalW + 'px';
+				clone.style.height = naturalH + 'px';
+				clone.style.display = 'block';
+
+				canvas.style.width = naturalW + 'px';
+				canvas.style.height = naturalH + 'px';
+				canvas.appendChild(clone);
 
 				modal.classList.add('active');
 				document.body.style.overflow = 'hidden';
+
+				var rect = viewport.getBoundingClientRect();
+				var viewW = rect.width || window.innerWidth * 0.9;
+				var viewH = rect.height || window.innerHeight * 0.8;
+				var fitScale = Math.min((viewW * 0.85) / naturalW, (viewH * 0.85) / naturalH, 1.5);
+
+				scale = Math.max(fitScale, 0.3);
+				panX = 0;
+				panY = 0;
+				updateTransform();
 			};
 
 			return modal;
