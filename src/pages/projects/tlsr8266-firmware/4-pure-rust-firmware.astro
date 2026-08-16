@@ -25,7 +25,7 @@ import Mermaid from '../../../components/Mermaid.astro';
 			<tr><td><strong>Brightness Resolution</strong></td><td>100 steps (1% increments)</td><td><strong>32,767 levels</strong> (<code>I16F16</code> fixed-point, <code>0x0000–0x7FFF</code>)</td></tr>
 			<tr><td><strong>Colour Temperature Resolution</strong></td><td>255 steps (1 byte)</td><td><strong>32,767 levels</strong> (<code>I16F16</code> fixed-point per channel)</td></tr>
 			<tr><td><strong>PWM Resolution & Frequency</strong></td><td>255 ticks (~600 Hz)</td><td><strong>10,455 compare ticks @ 3.06 kHz</strong> (IEEE 1789 flicker-free)</td></tr>
-			<tr><td><strong>Transition Model</strong></td><td>Instant step snapping (0 ms)</td><td><strong>1,500 ms non-blocking cubic easing</strong> (100 Hz update loop)</td></tr>
+			<tr><td><strong>Transition Model</strong></td><td>Instant stepping (0 ms)</td><td><strong>1,500 ms non-blocking cubic easing</strong> (100 Hz update loop)</td></tr>
 			<tr><td><strong>Sub-step Blending</strong></td><td>Jumps immediately to new target</td><td><strong>Dynamic trajectory re-targeting</strong> from current mid-point</td></tr>
 		</tbody>
 	</table>

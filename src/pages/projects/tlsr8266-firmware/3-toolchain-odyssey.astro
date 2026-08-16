@@ -6,7 +6,7 @@ import Mermaid from '../../../components/Mermaid.astro';
 <Post title="The toolchain odyssey" part={3} date="2026-08-16" series="tlsr8266-firmware">
 	<p class="tagline">
 		Rust has no native TC32 target. To compile pure Rust for the TLSR8266, I evolved the toolchain
-		from a fragile pipeline of regex-based Python scripts into an upstream-tracked LLVM backend fork
+		from a fragile pipeline of regex-based Python scripts into a custom LLVM backend fork
 		with whole-module dead-code elimination.
 	</p>
 
