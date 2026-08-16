@@ -14,7 +14,9 @@ import Mermaid from '../../../components/Mermaid.astro';
 	<p>
 		To keep pin counts and packaging costs minimal on budget IoT chips, Telink designed a
 		proprietary half-duplex single-wire debug interface called <strong>SWS (Single Wire Serial)</strong>.
-		On the TYBT1 module, this line is exposed as a solder pad labeled <code>SWS</code> (tied to MCU pin 15).
+		While single-wire debug concepts exist on other chips, Telink's specific wire framing and timing
+		are proprietary to their silicon. On the TYBT1 module, this line is exposed as a solder pad
+		labeled <code>SWS</code> (tied to MCU pin 15).
 	</p>
 	<p>
 		The SWS protocol was first reverse-engineered by <a href="https://rbaron.net/blog/2021/07/06/Reverse-engineering-the-M6-smart-fitness-band.html">Raphael Baron</a> (<a href="https://github.com/rbaron/m6-reveng">rbaron/m6-reveng</a>) on
@@ -47,8 +49,8 @@ import Mermaid from '../../../components/Mermaid.astro';
 		interrupt latency and jitter cause dropped bits and corrupted flash sectors.
 	</p>
 	<p>
-		The Raspberry Pi Pico's RP2040 microcontroller was suited for this problem.
-		Its <strong>Programmable I/O (PIO)</strong> state machines run deterministic assembly
+		The Raspberry Pi Pico was the right tool for the job — partly because I had one on my desk, and
+		partly because its <strong>Programmable I/O (PIO)</strong> state machines run deterministic assembly
 		instructions completely independent of the CPU cores.
 	</p>
 	<p>

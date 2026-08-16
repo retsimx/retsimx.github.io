@@ -8,38 +8,62 @@
 </div>
 <script is:inline>
 	(function () {
-		var els = document.querySelectorAll('pre.mermaid:not([data-processed])');
-		if (!els.length || window.__mermaidLoading) return;
-		window.__mermaidLoading = true;
-		import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs')
-			.then(function (mod) {
-				var mermaid = mod.default;
-				mermaid.initialize({
-					startOnLoad: false,
-					theme: 'base',
-					themeVariables: {
-						background: '#0d1119',
-						primaryColor: '#161b26',
-						primaryTextColor: '#dfe6f0',
-						primaryBorderColor: '#2a3345',
-						lineColor: '#8a94a6',
-						secondaryColor: '#10141d',
-						tertiaryColor: '#10141d',
-						noteBkgColor: '#161b26',
-						noteTextColor: '#dfe6f0',
-						actorBkg: '#161b26',
-						actorBorder: '#2a3345',
-						actorTextColor: '#dfe6f0',
-						signalColor: '#8a94a6',
-						signalTextColor: '#dfe6f0',
-						fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-						fontSize: '14px'
-					}
+		function runMermaid() {
+			var els = document.querySelectorAll('pre.mermaid:not([data-processed])');
+			if (!els.length) return;
+
+			if (window.__mermaidModule) {
+				window.__mermaidModule.run({ nodes: els });
+				return;
+			}
+
+			if (window.__mermaidPromise) {
+				window.__mermaidPromise.then(function (mermaid) {
+					var pending = document.querySelectorAll('pre.mermaid:not([data-processed])');
+					if (pending.length) mermaid.run({ nodes: pending });
 				});
-				mermaid.run({ nodes: els });
-			})
-			.catch(function () {
-				/* CDN unreachable: leave source <pre> as the fallback rendering */
-			});
+				return;
+			}
+
+			window.__mermaidPromise = import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs')
+				.then(function (mod) {
+					var mermaid = mod.default;
+					mermaid.initialize({
+						startOnLoad: false,
+						theme: 'base',
+						themeVariables: {
+							background: '#0d1119',
+							primaryColor: '#161b26',
+							primaryTextColor: '#dfe6f0',
+							primaryBorderColor: '#2a3345',
+							lineColor: '#8a94a6',
+							secondaryColor: '#10141d',
+							tertiaryColor: '#10141d',
+							noteBkgColor: '#161b26',
+							noteTextColor: '#dfe6f0',
+							actorBkg: '#161b26',
+							actorBorder: '#2a3345',
+							actorTextColor: '#dfe6f0',
+							signalColor: '#8a94a6',
+							signalTextColor: '#dfe6f0',
+							fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+							fontSize: '14px'
+						}
+					});
+					window.__mermaidModule = mermaid;
+					var allPending = document.querySelectorAll('pre.mermaid:not([data-processed])');
+					if (allPending.length) mermaid.run({ nodes: allPending });
+					return mermaid;
+				})
+				.catch(function () {
+					/* CDN unreachable: leave source <pre> as fallback rendering */
+				});
+		}
+
+		if (document.readyState === 'loading') {
+			document.addEventListener('DOMContentLoaded', runMermaid);
+		} else {
+			runMermaid();
+		}
 	})();
 </script>

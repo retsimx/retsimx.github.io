@@ -20,7 +20,7 @@ import { tlsr8266Parts, tlsr8266PartHref } from '../../../data/series';
 
 	<p class="tagline">
 		Literally all of this exists because I wanted my smart lights to smoothly tween between
-		colour temperatures at dawn and dusk. How a hatred of aggressive snapping and a flaky vendor
+		colour temperatures at dawn and dusk. How a frustration with abrupt stepping and a flaky vendor
 		Wi-Fi bridge spiralled into an overclocked RP2040 programmer, Ghidra decompilation of
 		proprietary Telink blobs, an LLVM backend fork, and a pure Rust firmware.
 	</p>
@@ -45,15 +45,15 @@ import { tlsr8266Parts, tlsr8266PartHref } from '../../../data/series';
 		toolchain ==>|"SWire (RP2040) / BLE OTA / UART OTA"| hardware`}</Mermaid>
 
 	<p>
-		The stock firmware in consumer Tuya BLE bulbs runs on the Telink TLSR8266: an obscure
-		32-bit RISC SoC built around Telink's proprietary "TC32" instruction set. Out of the box,
+		Certain Tuya BLE smart downlights and bulbs use the TYBT1 module, housing the Telink TLSR8266:
+		an obscure 32-bit RISC SoC built around Telink's proprietary "TC32" instruction set. Out of the box,
 		the vendor setup was annoying: a cheap USB Wi-Fi/BLE bridge that dropped packets, only 100
 		brightness steps and 255 colour increments, and zero on-device interpolation. When the central
 		controller sent sub-step updates during a 30-minute sunset fade, the downlights visibly stepped and
 		strobed hard enough that other people in the house noticed.
 	</p>
 	<p>
-		Today, every bulb in my house runs firmware written in Rust, compiled via an upstream-tracked
+		Today, every bulb in my house runs firmware written in Rust, compiled via a custom
 		LLVM fork, running a cooperative async runtime with 32,767 internal levels of easing,
 		10,455-tick PWM at 3.06 kHz, and zero vendor code.
 	</p>

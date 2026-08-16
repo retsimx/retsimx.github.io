@@ -169,6 +169,14 @@ import Mermaid from '../../../components/Mermaid.astro';
 		software crypto emulation.
 	</p>
 
+	<p>
+		It is worth noting that while the firmware compiles as 100% Rust and links zero C libraries,
+		much of the low-level link layer (particularly throughout <code>light_ll</code>) is a direct functional
+		translation of the reversed C code rather than textbook, idiomatic Rust. The immediate priority was
+		strict behavioral parity with the original protocol and stability on silicon; refactoring into cleaner
+		Rust abstractions is an ongoing effort.
+	</p>
+
 	<h2><span class="anchor-hash">#</span>the de-blobbing milestones & battle scars</h2>
 	<p>
 		The transition from vendor C libraries to pure Rust happened in stages. Each milestone stripped away

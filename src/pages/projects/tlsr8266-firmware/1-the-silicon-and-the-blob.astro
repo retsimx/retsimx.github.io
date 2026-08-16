@@ -6,8 +6,8 @@ import Mermaid from '../../../components/Mermaid.astro';
 <Post title="The silicon and the blob" part={1} date="2026-08-16" series="tlsr8266-firmware">
 	<p class="tagline">
 		Literally all of this exists because I wanted my lights to smoothly tween between colour
-		temperatures at dawn and dusk. Inside consumer Tuya bulbs lies an obscure 32-bit RISC SoC — the
-		Telink TLSR8266 — wrapped in a closed-source vendor blob that snapped abruptly between states.
+		temperatures at dawn and dusk. Certain Tuya smart downlights use an obscure 32-bit RISC SoC — the
+		Telink TLSR8266 — wrapped in a closed-source vendor blob that stepped abruptly between states.
 	</p>
 
 	<h2><span class="anchor-hash">#</span>the origin: the dawn/dusk problem</h2>
@@ -29,8 +29,8 @@ import Mermaid from '../../../components/Mermaid.astro';
 		</li>
 		<li>
 			<strong>Zero On-Device Tweening:</strong> The OEM firmware had no interpolation between states. When the
-			controller sent a sub-step, the light didn't fade — it snapped to the new value instantly. Over a thirty-minute
-			sunset fade, the downlights stepped and strobed visibly enough that other people in the house complained.
+			controller sent a sub-step, the light didn't fade — it stepped to the new value instantly with no transition.
+			Over a thirty-minute sunset fade, the downlights stepped and strobed visibly enough that other people in the house complained.
 		</li>
 		<li>
 			<strong>Severe PWM Flicker:</strong> When dimmed, the OEM firmware's PWM counter ran at ~600 Hz.
@@ -47,11 +47,10 @@ import Mermaid from '../../../components/Mermaid.astro';
 
 	<h2><span class="anchor-hash">#</span>the hardware target</h2>
 	<p>
-		If you crack open a typical Tuya BLE smart light bulb or downlight, you will find a small
-		daughterboard soldered onto the power supply: the <strong>TYBT1</strong> module.
-		At the heart of that module sits the <strong>Telink TLSR8266F512</strong> — an ultra-low-cost
-		System-on-Chip integrating a 32-bit proprietary microcontroller, a 2.4 GHz multi-protocol radio,
-		512 KB of on-chip SPI flash, and 16 KB of SRAM.
+		Tuya uses a variety of microcontrollers across their product lines, but many BLE smart downlights
+		and bulbs are built around the <strong>TYBT1</strong> daughterboard. At the heart of the TYBT1 sits
+		the <strong>Telink TLSR8266F512</strong> — an ultra-low-cost System-on-Chip integrating a 32-bit proprietary
+		microcontroller, a 2.4 GHz multi-protocol radio, 512 KB of on-chip SPI flash, and 16 KB of SRAM.
 	</p>
 	<p>
 		For development and bridging, the same chip is available on the <strong>E104-BT05-TB</strong> dev
@@ -71,32 +70,24 @@ import Mermaid from '../../../components/Mermaid.astro';
 
 	<h2><span class="anchor-hash">#</span>the vendor wall</h2>
 	<p>
-		Telink's official SDK for the TLSR8266 is typical of budget IoT chip vendors: rather than
-		shipping source code for the Bluetooth Low Energy stack and mesh networking, Telink ships a
-		precompiled static archive: <code>libble_app_8266.a</code>.
+		Telink's official documentation and SDK for the TLSR8266 are typical of budget IoT chip vendors.
+		Official datasheets and reference manuals are intentionally sparse, omitting key register definitions,
+		timing constraints, and link-layer internals.
 	</p>
 	<p>
-		This archive contained compiled object files — chief among them <code>light_ll.o</code> and <code>shared_mem.o</code> — which
-		implemented the lower link layer, RF interrupt dispatchers, GATT attribute server, pairing state machine,
-		and Tuya cloud provisioning hooks. Even worse:
+		Rather than shipping source code for the Bluetooth Low Energy stack and mesh networking, Telink ships a
+		precompiled static archive: <code>libble_app_8266.a</code>. This archive contained compiled object files — chief
+		among them <code>light_ll.o</code> and <code>shared_mem.o</code> — which implemented the lower link layer,
+		RF interrupt dispatchers, GATT attribute server, pairing state machine, and Tuya cloud provisioning hooks.
 	</p>
-	<ul>
-		<li>
-			<strong>Proprietary Toolchain:</strong> Telink provided a heavily patched fork of GCC 4.5.1
-			targeting their custom "TC32" architecture.
-		</li>
-		<li>
-			<strong>Global Mutable Sprawl:</strong> The SDK relied on dozens of unsynchronized global
-			variables scattered across arbitrary SRAM addresses without memory protection.
-		</li>
-		<li>
-			<strong>Cloud & App Lock-in:</strong> The default firmware enforced Tuya's proprietary pairing
-			handshake and expected cloud tokens to provision mesh keys.
-		</li>
-	</ul>
 	<p>
-		If I wanted local control, reproducible builds, flicker-free PWM, and on-device tweening in Rust,
-		linking against <code>libble_app_8266.a</code> was a dead end. I had to take the binary blob apart.
+		Even worse, Telink distributed a patched GCC 4.5.1 binary toolchain (<code>tc32-elf-gcc</code>) without
+		releasing the corresponding source code, in direct violation of the GPL.
+	</p>
+	<p>
+		While it was technically possible to build custom applications on top of <code>libble_app_8266.a</code>, doing
+		so left the firmware tethered to closed link-layer code, global mutable sprawl, and proprietary pairing handshakes.
+		I wanted complete, end-to-end control of every byte running on the silicon. That meant taking the binary blob apart.
 	</p>
 
 	<h2><span class="anchor-hash">#</span>decompiling TC32 with Ghidra</h2>

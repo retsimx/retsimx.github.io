@@ -166,10 +166,9 @@ replaced = {
 		ASM -->|"tc32-elf-as + ld --gc-sections"| OUT["Final Binary (77,788 bytes)"]`}</Mermaid>
 
 	<p>
-		By linking all crate bitcode files together with <code>llvm-link</code> and executing double passes of
-		<strong>Interprocedural Sparse Conditional Constant Propagation (<code>ipsccp</code>)</strong> and
-		<strong>Dead Argument Elimination (<code>deadargelim</code>)</strong>, LLVM was able to resolve constants
-		and prune unused code across crate boundaries.
+		By linking all crate bitcode files together with <code>llvm-link</code> and executing double passes of <strong>Interprocedural
+		Sparse Conditional Constant Propagation (<code>ipsccp</code>)</strong> and <strong>Dead Argument Elimination (<code>deadargelim</code>)</strong>,
+		LLVM was able to resolve constants and prune unused code across crate boundaries.
 	</p>
 	<p>
 		Combined with the linker's <code>--gc-sections</code>, firmware size dropped from <strong>79,948 bytes</strong> down
