@@ -233,7 +233,7 @@
 				var pre = wrap.querySelector('pre.mermaid');
 
 				function handleExpand(e) {
-					var svg = wrap.querySelector('svg');
+					var svg = wrap.querySelector('pre.mermaid svg');
 					if (!svg) return;
 					e.preventDefault();
 					var modal = ensureModal();
