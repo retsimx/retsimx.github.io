@@ -12,8 +12,9 @@ import Mermaid from '../../../components/Mermaid.astro';
 
 	<h2><span class="anchor-hash">#</span>how the vendor apps talk</h2>
 	<p>
-		MyAir's Android stack is two apps: <code>myair5</code> (the MyPlace UI) and
-		<code>aaservice</code> (the background service that owns the USB link to the control
+		MyAir's Android stack is two apps: <code>myair5</code> (the MyPlace UI) and <code
+			>aaservice</code
+		> (the background service that owns the USB link to the control
 		box). They communicate via system broadcasts — and reading the decompiled source, every
 		message type exists in <strong>two parallel variants</strong>:
 	</p>
@@ -61,17 +62,14 @@ Quirk: 3 random bytes are prepended to the plaintext before
 		My rebuilt service (<code>aaservice2</code>, package renamed, signed with my own key)
 		can't send or receive the signature-guarded broadcasts: the framework checks the
 		caller's signing certificate against the certificate of the app that declared the
-		permission. Root alone doesn't bypass this — the check lives in
-		<code>PackageManagerService</code>, not in either app.
+		permission. Root alone doesn't bypass this — the check lives in <code
+			>PackageManagerService</code>, not in either app.
 	</p>
-	<p>
-		Options considered:
-	</p>
+	<p>Options considered:</p>
 	<ul>
 		<li>
-			<strong>LSPosed hook</strong> on <code>PackageManagerService.checkPermission()</code>
-			to return GRANTED for <code>secure_comms</code> — elegant, survives app updates, but
-			adds a framework-hooking dependency to a wall-mounted appliance
+			<strong>LSPosed hook</strong> on <code>PackageManagerService.checkPermission()</code> to return GRANTED for <code>secure_comms</code> — elegant, survives app updates, but adds a
+			framework-hooking dependency to a wall-mounted appliance
 		</li>
 		<li>
 			<strong>Use only the <code>_NO_PERMISSION</code> lanes</strong> — covers most of the
@@ -86,12 +84,11 @@ Quirk: 3 random bytes are prepended to the plaintext before
 	<h2><span class="anchor-hash">#</span>the lobotomy</h2>
 	<p>
 		The entire modification is two lines across two manifests:
-		<code>protectionLevel="signature"</code> → <code>"normal"</code> for
-		<code>com.air.android.secure_comms</code> (and MyPlace's
-		<code>DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION</code>). Both apps are then rebuilt and
-		re-signed with a throwaway key — and since both are now signed by the <em>same</em>
-		throwaway key, even the remaining signature semantics are satisfied. Any app on the
-		device can now join the broadcast protocol.
+		<code>protectionLevel="signature"</code> → <code>"normal"</code> for <code
+			>com.air.android.secure_comms</code
+		> (and MyPlace's <code>DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION</code>). Both apps are
+		then rebuilt and re-signed with a throwaway key — and since both are now signed by the <em>same</em> throwaway key, even the remaining signature semantics are satisfied. Any
+		app on the device can now join the broadcast protocol.
 	</p>
 	<p>The full, reproducible recipe:</p>
 
@@ -189,10 +186,7 @@ apksigner sign --ks lobotomy.jks --ks-key-alias lobotomy \
 	<p>
 		The lobotomised pair was the bridge: it kept the system fully working while I built the
 		real replacement. Patching smali gets you a working app once; it doesn't get you a
-		maintainable one. The endgame is
-		<a href="https://github.com/retsimx/aaservice">retsimx/aaservice</a> — a clean-room
-		Kotlin reimplementation of the vendor service, reconstructed from the decompiled source
-		with protocol behaviour preserved exactly, plus one new trick the vendor version never
+		maintainable one. The endgame is <a href="https://github.com/retsimx/aaservice">retsimx/aaservice</a> — a clean-room
 		had: a <strong>dual transport</strong>. It can drive the control box over the original
 		USB accessory path, <em>or</em> as a WebSocket client to a daemon running somewhere else
 		entirely.

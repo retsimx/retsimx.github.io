@@ -12,10 +12,13 @@ import Mermaid from '../../../components/Mermaid.astro';
 
 	<h2><span class="anchor-hash">#</span>the wire protocol</h2>
 	<p>
-		Everything known about the CB↔tablet link comes from
-		<a href="https://github.com/gundy/aa_interop">aa_interop</a>, reverse-engineered from a
-		single CB9. The physical layer is half-duplex RS-485 at 57600 8N1, carried (with ~14 V
-		power) on what looks like an Ethernet cable. Messages are framed in a custom envelope:
+		The register-level detail below comes from my own reverse engineering of the vendor APK
+		and OEM hardware, cross-checked against <a href="https://github.com/gundy/aa_interop"
+			>aa_interop</a
+		> — the community documentation effort (built from a single CB9) that I've since
+		contributed corrections and improvements back to. The physical layer is half-duplex
+		RS-485 at 57600 8N1, carried (with ~14 V power) on what looks like an Ethernet cable.
+		Messages are framed in a custom envelope:
 	</p>
 	<pre><code>&lt;U&gt;PAYLOAD&lt;/U=CRC&gt;      e.g.   &lt;U&gt;Ping&lt;/U=db&gt;</code></pre>
 	<p>
@@ -95,15 +98,16 @@ cat /dev/ttyUSB0     # &lt;U&gt;Ping&lt;/U=db&gt; &lt;U&gt;Ping&lt;/U=db&gt; …
 	</p>
 	<ul>
 		<li>
-			<strong>Single active client.</strong> A second WebSocket connection is rejected
-			immediately with close code <code>4009</code>. One writer means no split-brain state
-			mutations on a half-duplex bus — enforcement at the door, not discipline in the
-			clients.
+			<strong>Typed mailboxes, not raw registers.</strong> Clients see <code
+				>system_status.power = "on"</code>, not byte 0 of register 05. The daemon owns
+			the 7-byte encoding, the write policies, and the resync handshake.
 		</li>
 		<li>
-			<strong>Typed mailboxes, not raw registers.</strong> Clients see
-			<code>system_status.power = "on"</code>, not byte 0 of register 05. The daemon owns
-			the 7-byte encoding, the write policies, and the resync handshake.
+			<strong>Many concurrent clients, one writer's discipline.</strong> The first cut
+			allowed a single active WebSocket client (a second connection got close code <code>4009</code>) — one writer, no split-brain on a half-duplex bus. The broker
+			protocol superseded that: many clients can connect at once, register events fan out
+			to every session so all clients stay in sync, and write policy is enforced
+			per-register at the daemon.
 		</li>
 	</ul>
 
@@ -123,10 +127,10 @@ cat /dev/ttyUSB0     # &lt;U&gt;Ping&lt;/U=db&gt; &lt;U&gt;Ping&lt;/U=db&gt; …
 		as a Magisk module using the AOA backend against the same USB accessory the vendor
 		service used. That de-risked the protocol engine against the live control box while the
 		tablet was still the bus talker, and made the Pi cutover (part 5) a config change
-		rather than a leap of faith. The rebuilt
-		<a href="https://github.com/retsimx/aaservice">aaservice2</a> gained its dual-mode
-		transport at the same time: USB mode for the stock path, WS mode pointing at the
-		daemon — first at loopback, later at the Pi.
+		rather than a leap of faith. The rebuilt <a href="https://github.com/retsimx/aaservice"
+			>aaservice2</a
+		> gained its dual-mode transport at the same time: USB mode for the stock path, WS mode
+		pointing at the daemon — first at loopback, later at the Pi.
 	</p>
 
 	<h2><span class="anchor-hash">#</span>hardening: the broker protocol</h2>

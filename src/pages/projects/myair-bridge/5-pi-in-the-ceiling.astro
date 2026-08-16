@@ -32,27 +32,45 @@ import Mermaid from '../../../components/Mermaid.astro';
 			<tr>
 				<td>USB-to-RS485 dongle (CH340)</td>
 				<td>bus PHY</td>
-				<td><a href="https://www.aliexpress.com/wholesale?SearchText=USB+to+RS485+converter+module">AliExpress</a></td>
+				<td>
+					<a href="https://www.aliexpress.com/item/1005011600341714.html">AliExpress</a> ·
+					<a href="https://www.aliexpress.com/wholesale?SearchText=USB+to+RS485+converter+module">search</a>
+				</td>
 			</tr>
 			<tr>
 				<td>Buck converter 12/24 V → 5 V 3 A, micro-USB out, waterproof</td>
 				<td>power the Pi from the CB's ~14 V feed</td>
-				<td><a href="https://www.aliexpress.com/wholesale?SearchText=12V+24V+to+5V+3A+buck+converter+micro+usb+waterproof">AliExpress</a></td>
+				<td>
+					<a href="https://www.aliexpress.com/item/1005009139566295.html">AliExpress</a> ·
+					<a href="https://www.aliexpress.com/wholesale?SearchText=12V+24V+to+5V+3A+buck+converter+micro+usb+waterproof">search</a>
+				</td>
 			</tr>
 			<tr>
 				<td>90° <strong>left</strong> micro-USB OTG → USB-A adapter</td>
 				<td>RS-485 dongle clears the PWR plug</td>
-				<td><a href="https://www.aliexpress.com/wholesale?SearchText=90+degree+micro+usb+otg+adapter+left">AliExpress</a></td>
+				<td>
+					<a href="https://www.aliexpress.com/item/4001307573370.html">AliExpress</a> ·
+					<a href="https://www.aliexpress.com/wholesale?SearchText=90+degree+micro+usb+otg+adapter+left">search</a>
+				</td>
 			</tr>
 			<tr>
 				<td>5×20 mm ceramic fuse, 1 A slow-blow (T) + inline holder</td>
 				<td>fuse the ~14 V tap before the buck</td>
-				<td><a href="https://www.aliexpress.com/wholesale?SearchText=5x20+ceramic+fuse+slow+blow+assortment">AliExpress</a> · <a href="https://www.aliexpress.com/wholesale?SearchText=5x20+inline+fuse+holder+wire">holder</a></td>
+				<td>
+					<a href="https://www.aliexpress.com/item/1005010578878638.html">AliExpress</a> ·
+					<a href="https://www.aliexpress.com/wholesale?SearchText=5x20+ceramic+fuse+slow+blow+assortment">search</a>
+					·
+					<a href="https://www.aliexpress.com/item/1005004717291653.html">holder</a> ·
+					<a href="https://www.aliexpress.com/wholesale?SearchText=5x20+inline+fuse+holder+wire">search</a>
+				</td>
 			</tr>
 			<tr>
 				<td>12-position barrier terminal strip, 0.5–2.5 mm², flame retardant</td>
 				<td>A/B/GND/+14 V distribution</td>
-				<td><a href="https://www.aliexpress.com/wholesale?SearchText=12+position+barrier+screw+terminal+block+flame+retardant">AliExpress</a></td>
+				<td>
+					<a href="https://www.aliexpress.com/item/1005009749912516.html">AliExpress</a> ·
+					<a href="https://www.aliexpress.com/wholesale?SearchText=12+position+barrier+screw+terminal+block+flame+retardant">search</a>
+				</td>
 			</tr>
 			<tr>
 				<td>Cat5e patch lead</td>
@@ -94,13 +112,26 @@ import Mermaid from '../../../components/Mermaid.astro';
 		P46 --> TS
 		P5 --> FUSE["1 A T fuse"] --> BUCK["buck → 5 V micro-USB"] --> PWR["Pi Zero W PWR"]
 		TS -->|"A/B/GND"| RS["USB-RS485 dongle"] --> OTG["90° left OTG"] --> USBP["Pi Zero W USB (OTG)"]
-		TS -->|"GND"| BUCK`}</Mermaid>
+		TS -->|"GND"| BUCK
+		TS -->|"~14 V + GND<br/>(power only)"| JOIN["ethernet joiner"] --> OEM["OEM cable"] --> TABP["Wall tablet<br/>(power only; data pair disconnected)"]`}</Mermaid>
+
+	<p>
+		The final wrinkle: the wall tablet still needs power, and its OEM cable used to get
+		both power <em>and</em> data from the CB. The finished build forks a second
+		power-only feed off the terminal block (~14 V + GND, no A/B pair) through an ethernet
+		joiner into the OEM cable. The tablet keeps its always-on wall power, its FTDI data
+		path to the CB is physically disconnected, and all control flows over Wi-Fi to the Pi's
+		WebSocket API. Same topology will serve the eventual Home Assistant setup — the wall
+		tablet becomes a dumb-ish panel regardless of what software is asking the daemon
+		questions.
+	</p>
 
 	<div class="callout warn">
 		<span class="callout-label">rules</span>
 		Fuse goes on the ~14 V line <em>before</em> the buck. Common ground everywhere. And the
-		cardinal rule: never two tablet-side talkers on the same RS-485 segment — rollback is
-		"disconnect the tap, reconnect the tablet cable".
+		cardinal rule: never two tablet-side talkers on the same RS-485 segment — with the
+		power-only fork, the tablet's data pair isn't even connected, so the rule enforces
+		itself.
 	</div>
 
 	<figure>
@@ -117,20 +148,22 @@ import Mermaid from '../../../components/Mermaid.astro';
 		<figure>
 			<img src="/photos/aircon/pi-assembly-4.jpg" alt="Bridge assembly, terminal strip" loading="lazy" />
 		</figure>
-		<figure>
-			<img src="/photos/aircon/enclosure-1.jpg" alt="Assembly migrated into the enclosure" loading="lazy" />
-		</figure>
 	</div>
 	<figure>
+		<img src="/photos/aircon/enclosure-1.jpg" alt="Assembly migrated into the enclosure" loading="lazy" />
+		<figcaption>Migrated into the food container.</figcaption>
+	</figure>
+	<figure>
 		<img src="/photos/aircon/enclosure-2.jpg" alt="Enclosure with cables entering via lid notch" loading="lazy" />
-		<figcaption>Migrated into the food container — cables enter through a notch in the lid.</figcaption>
+		<figcaption>Cables enter through a notch in the lid — sealed, not hermetic.</figcaption>
 	</figure>
 
 	<h2><span class="anchor-hash">#</span>the software appliance</h2>
 	<p>
 		The Pi runs <strong>Alpine Linux</strong> (32-bit ARMv6, OpenRC) — small, musl-based,
-		and happy on the Zero W. The daemon is cross-compiled as a static musl binary with
-		<a href="https://github.com/cross-rs/cross">cross</a>:
+		and happy on the Zero W. The daemon is cross-compiled as a static musl binary with <a
+			href="https://github.com/cross-rs/cross">cross</a
+		>:
 	</p>
 	<pre><code>cargo install cross --git https://github.com/cross-rs/cross
 ./scripts/build-pi-zero.sh   # → arm-unknown-linux-musleabihf/release/cb-daemon
@@ -146,10 +179,10 @@ unit_id_hint = "xxxxx"     # your CB's unit id
 log_level = "debug"</code></pre>
 
 	<p>
-		OpenRC runs it under <code>supervise-daemon</code> (unlimited respawn, waits for
-		<code>/dev/ttyUSB0</code> at boot). One Alpine gotcha worth publishing: OpenRC 0.63's
-		supervise-daemon captures <em>no</em> child output unless you set
-		<code>output_log</code>/<code>error_log</code> — without them, logs vanish silently.
+		OpenRC runs it under <code>supervise-daemon</code> (unlimited respawn, waits for <code>/dev/ttyUSB0</code> at boot). One Alpine gotcha worth publishing: OpenRC 0.63's
+		supervise-daemon captures <em>no</em> child output unless you set <code
+			>output_log</code
+		>/<code>error_log</code> — without them, logs vanish silently.
 	</p>
 
 	<h3>RAM-only logging, and the ENOSPC deadlock</h3>
@@ -178,24 +211,23 @@ log_level = "debug"</code></pre>
 			<figcaption>Sealed up, ready to go up.</figcaption>
 		</figure>
 		<figure>
-			<img src="/photos/aircon/ceiling-1.jpg" alt="Installation at the control box in the ceiling" loading="lazy" />
-			<figcaption>In the ceiling, at the control box.</figcaption>
+			<img src="/photos/aircon/ceiling-1.jpg" alt="The OEM wall panel's ethernet lead at the control box" loading="lazy" />
+			<figcaption>The OEM wall panel's ethernet lead where it meets the CB — the cable I disconnected and plugged the Pi build into.</figcaption>
 		</figure>
 		<figure>
-			<img src="/photos/aircon/ceiling-2.jpg" alt="Bridge connected to the control box" loading="lazy" />
-			<figcaption>Tapped into the CB: RS-485 pair + ~14 V feed.</figcaption>
+			<img src="/photos/aircon/ceiling-2.jpg" alt="Box open, fuse removed, verifying with a multimeter" loading="lazy" />
+			<figcaption>Box open, fuse pulled — verifying every connection with a multimeter before first power-on.</figcaption>
 		</figure>
 		<figure>
-			<img src="/photos/aircon/ceiling-3.jpg" alt="Installed bridge, final position" loading="lazy" />
-			<figcaption>Final resting place. Not hermetic — it doesn't need to be.</figcaption>
+			<img src="/photos/aircon/ceiling-3.jpg" alt="The Pi build running in the ceiling" loading="lazy" />
+			<figcaption>First boot, live on the bus. It was later cable-tied to a wooden beam near the CB.</figcaption>
 		</figure>
 	</div>
 
 	<h2><span class="anchor-hash">#</span>cutover</h2>
 	<p>
-		Bus verification first — with nothing talking, the CB's endless <code>Ping</code>
-		heartbeat confirms wiring, then a one-shot probe confirms negotiation:
-	</p>
+		Bus verification first — with nothing talking, the CB's endless <code>Ping</code> heartbeat
+		confirms wiring, then a one-shot probe confirms negotiation:	</p>
 	<pre><code>stty -F /dev/ttyUSB0 57600 raw -echo
 cat /dev/ttyUSB0                        # &lt;U&gt;Ping&lt;/U=db&gt; &lt;U&gt;Ping&lt;/U=db&gt; …
 echo -n "&lt;U&gt;getSystemData&lt;/U=15&gt;" &gt; /dev/ttyUSB0
@@ -214,12 +246,12 @@ su -c 'am start-foreground-service \
   --es transport_mode ws'</code></pre>
 
 	<p>
-		One app-side gotcha: Android's network security policy blocks cleartext
-		<code>ws://</code> to non-loopback hosts, so the rebuilt aaservice ships a
-		<code>network_security_config</code> with <code>cleartextTrafficPermitted="true"</code>
-		(fine here — the link is an isolated IoT VLAN, and the protocol has no secrets worth
-		encrypting). The tablet's USB cable stays plugged into the CB — it powers the tablet
-		and keeps rollback to the stock path a cable-swap away.
+		One app-side gotcha: Android's network security policy blocks cleartext <code
+			>ws://</code
+		> to non-loopback hosts, so the rebuilt aaservice ships a <code
+			>network_security_config</code
+		> with <code>cleartextTrafficPermitted="true"</code> (fine here — the link is an
+		isolated IoT VLAN, and the protocol has no secrets worth encrypting).
 	</p>
 
 	<h2><span class="anchor-hash">#</span>verification</h2>
@@ -231,15 +263,32 @@ netstat -tn | grep 2026            # ESTABLISHED from the tablet
 # on the tablet — wall panel works end-to-end through the Pi,
 # and the vendor :2025 HTTP API (home automation) never noticed</code></pre>
 
+	<p>
+		The stack has already survived its hardest live test: re-pairing a wireless temperature
+		sensor. That's the most convoluted flow in the whole system — RF pairing chatter on the
+		bus, register 12 events through the daemon, out the WebSocket, through aaservice2's
+		broadcast mapping, into MyPlace's pairing UI, and the attach write all the way back —
+		and it completed perfectly. If that works, everything works.
+	</p>
+
 	<h2><span class="anchor-hash">#</span>where it stands</h2>
 	<ul>
-		<li>The Pi is the sole talker on the CB bus; the tablet is a pure WebSocket client</li>
-		<li>The vendor UI is 100% functional — zones, temps, modes, schedules</li>
-		<li>The tablet-local daemon stack has been fully removed (rollback = reinstall module + point the WS URL at loopback)</li>
+		<li>The Pi is the sole talker on the CB bus; the tablet is a pure WebSocket client, powered via the power-only fork</li>
+		<li>The vendor UI is 100% functional — zones, temps, modes, schedules, sensor pairing</li>
 		<li>
-			Next up: moving the tablet-side logic (schedules, myauto) off Android entirely, and
-			a northbound API for the rest of the house — the daemon's broker protocol is ready
-			for it
+			Complete rollback: unplug the fork, plug the OEM cable back into the CB, and flip
+			aaservice2 back to USB mode — the same configuration as the OEM software stack,
+			just running our lobotomised MyPlace and our aaservice rewrite
+		</li>
+		<li>
+			The Pi Zero W was simply what was on hand — any SBC with Linux and a USB port can
+			fill this role. An MCU (ESP32, Pico W) could too, but that path needs custom Rust
+			firmware that doesn't exist yet
+		</li>
+		<li>
+			The endgame: retire the vendor apps entirely — a Home Assistant integration against
+			the daemon's broker API, with HA running on the wall tablet itself, powered by the
+			same power-only fork
 		</li>
 	</ul>
 

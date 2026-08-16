@@ -27,11 +27,9 @@ import Mermaid from '../../../components/Mermaid.astro';
 	<p>
 		The wall tablet is the weakest link in the whole system, and it's also the part the
 		vendor treats as a fuse: when it dies, the official answer is a new control system. The
-		write-up at
-		<a href="https://blog.hopefullyuseful.com/blog/advantage-air-ezone-tablet-diy-repair/"
+		write-up at <a href="https://blog.hopefullyuseful.com/blog/advantage-air-ezone-tablet-diy-repair/"
 			>blog.hopefullyuseful.com</a
-		>
-		tells the story well — OEM tablet suffers the classic eMMC failure six months out of
+		> tells the story well — OEM tablet suffers the classic eMMC failure six months out of
 		warranty, support quotes <strong>$1,697</strong> for a replacement tablet, control box,
 		and wireless sensors, because "new phones come out every year". The air conditioner was
 		fine. The control box was fine. They were being asked to replace a five-figure system's
@@ -39,11 +37,14 @@ import Mermaid from '../../../components/Mermaid.astro';
 	</p>
 	<p>
 		That post has a happy ending (a 2015 Galaxy Tab 4 and some apktool surgery), and the
-		Hacker News discussion around it kicked off
-		<a href="https://github.com/gundy/aa_interop">aa_interop</a> — a community effort to
-		document the hardware, protocol, and API. But the structural problem remains: if you run
-		this system as shipped, your ability to turn your heater on is gated by a vendor's
-		app-store listing, a vendor-signed app pair, and a tablet with a known mortality date.
+		Hacker News discussion around it kicked off <a href="https://github.com/gundy/aa_interop"
+			>aa_interop</a
+		> — a community effort to document the hardware, protocol, and API. I'd independently
+		reverse-engineered the vendor APK and OEM hardware before I knew that effort existed,
+		and have since contributed corrections and improvements back to it. But the structural
+		problem remains: if you run this system as shipped, your ability to turn your heater on
+		is gated by a vendor's app-store listing, a vendor-signed app pair, and a tablet with a
+		known mortality date.
 	</p>
 	<p>
 		I didn't want to wait for my turn. The swap was <strong>proactive</strong>: the OEM
@@ -80,9 +81,11 @@ import Mermaid from '../../../components/Mermaid.astro';
 			so every migration step has to be a clean handover, never a shared bus.
 		</li>
 		<li>
-			<strong>No vendor documentation.</strong> Everything known about the wire protocol
-			comes from <a href="https://github.com/gundy/aa_interop">aa_interop</a>, which
-			reverse-engineered a single CB9 control box. Verify everything against this install.
+			<strong>No vendor documentation.</strong> The wire protocol was reverse-engineered —
+			partly by me from the vendor APK and OEM hardware, partly by the <a
+				href="https://github.com/gundy/aa_interop">aa_interop</a
+			> community effort (whose
+			author studied a single CB9). Verify everything against this install.
 		</li>
 		<li>
 			<strong>It's production.</strong> This is the house's heating and cooling. Debugging

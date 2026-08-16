@@ -29,6 +29,27 @@ Content must never include identifying or sensitive information:
 Pipeline: `convert IN.jpg -auto-orient -resize '1600x1600>' -strip -quality 82 OUT.jpg`
 (ImageMagick). Store under `public/photos/<topic>/`, reference with `loading="lazy"`.
 
+### Astro whitespace gotcha
+
+Astro collapses whitespace to nothing at text↔tag line breaks (`text\n<em>` renders as
+`text<em>` with no space — kerning bug). Keep the boundary word and the tag's `<` on the
+same source line. Verify after building:
+
+```sh
+python3 - <<'EOF'
+import re, glob
+for f in glob.glob('dist/**/*.html', recursive=True):
+    txt = open(f).read()
+    for m in re.finditer(r'<(a|em|strong|code)\b[^>]*>[^<]*</\1>', txt):
+        b = txt[m.start()-1] if m.start() > 0 else ''
+        a = txt[m.end()] if m.end() < len(txt) else ''
+        if b.isalpha() or a.isalpha():
+            print(f, txt[max(0,m.start()-45):m.end()+45])
+EOF
+```
+
+(no output = clean)
+
 ### Deployment
 
 Push to `main` → GitHub Actions builds and deploys. Pages source is set to

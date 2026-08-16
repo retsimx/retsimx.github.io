@@ -37,7 +37,10 @@ import Post from '../../../layouts/Post.astro';
 			<tr>
 				<td>Remote access</td>
 				<td>SimpleSSHD on port 2222, key-only</td>
-				<td>The tablet is headless infrastructure; SSH is the admin interface</td>
+				<td>
+					Full root terminal from my desk — health checks, log pulls, quick
+					iteration — without standing at a wall-mounted touchscreen
+				</td>
 			</tr>
 			<tr>
 				<td>Vendor apps</td>
@@ -55,14 +58,12 @@ import Post from '../../../layouts/Post.astro';
 	<h2><span class="anchor-hash">#</span>the one check that matters</h2>
 	<p>
 		The vendor apps refuse to run on hardware they don't recognise — the infamous
-		"Not on AA Hardware" toast. The check is a string comparison against
-		<code>Build.MODEL</code>, and the accepted model for the 8" MyAir5 tablet is
-		<code>PIC8GS10</code>. A comment on the Hacker News thread for the
-		<a href="https://blog.hopefullyuseful.com/blog/advantage-air-ezone-tablet-diy-repair/"
+		"Not on AA Hardware" toast. The check is a string comparison against <code>Build.MODEL</code>, and the accepted
+		model for the 8" MyAir5 tablet is <code>PIC8GS10</code>. A comment on the Hacker News
+		thread for the <a href="https://blog.hopefullyuseful.com/blog/advantage-air-ezone-tablet-diy-repair/"
 			>upstream repair story</a
-		>
-		had already pointed out that on a rooted tablet you can just change the model prop and
-		everything works — and that's exactly the approach:
+		> had already pointed out that on a rooted tablet you can just change the model prop
+		and everything works — and that's exactly the approach:
 	</p>
 	<ul>
 		<li>
@@ -70,7 +71,7 @@ import Post from '../../../layouts/Post.astro';
 			prop: <code>ro.product.model=PIC8GS10</code>
 		</li>
 		<li>
-			A belt-and-braces Magisk boot script that <code>resetprop</code>s the same value
+			A belt-and-braces Magisk boot script that applies the same value via <code>resetprop</code>
 		</li>
 	</ul>
 	<p>
@@ -128,11 +129,11 @@ PIC8GS10</code></pre>
 
 	<h2><span class="anchor-hash">#</span>where this leaves us</h2>
 	<p>
-		At this point the system is <em>functionally</em> stock — same apps, same UI, same
-		features — but every layer underneath the apps is mine. That buys two things: the
-		tablet is now replaceable commodity hardware, and root access opens the door to the
-		next step. Because the vendor apps still enforce a signature permission on their
-		inter-app broadcasts, and my own service implementation can't hold the vendor's signing
-		key. That's part 3.
+		At this point the system is <em>functionally</em> stock — the panel is still on the
+		wall, same apps, same UI, same features, driven by touch as always — but every layer
+		underneath the apps is mine. That buys two things: the tablet is now replaceable
+		commodity hardware, and root access opens the door to the next step. Because the vendor
+		apps still enforce a signature permission on their inter-app broadcasts, and my own
+		service implementation can't hold the vendor's signing key. That's part 3.
 	</p>
 </Post>
