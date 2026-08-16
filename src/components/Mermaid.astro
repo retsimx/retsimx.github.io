@@ -1,26 +1,243 @@
 ---
-// Client-side mermaid renderer. If the CDN is unreachable, the raw diagram
-// source stays visible in a styled <pre> as a graceful fallback.
+// Client-side mermaid renderer with interactive pan/zoom lightbox.
 ---
 
 <div class="mermaid-wrap">
+	<div class="mermaid-header">
+		<button class="mermaid-expand-btn" title="Expand and zoom diagram">
+			<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<polyline points="15 3 21 3 21 9"></polyline>
+				<polyline points="9 21 3 21 3 15"></polyline>
+				<line x1="21" y1="3" x2="14" y2="10"></line>
+				<line x1="3" y1="21" x2="10" y2="14"></line>
+			</svg>
+			expand
+		</button>
+	</div>
 	<pre class="mermaid"><slot /></pre>
 </div>
+
 <script is:inline>
 	(function () {
+		function ensureModal() {
+			var modal = document.getElementById('mermaid-modal');
+			if (modal) return modal;
+
+			modal = document.createElement('div');
+			modal.id = 'mermaid-modal';
+			modal.className = 'mermaid-modal';
+			modal.innerHTML = [
+				'<div class="mermaid-modal-backdrop"></div>',
+				'<div class="mermaid-modal-content">',
+				'  <div class="mermaid-modal-toolbar">',
+				'    <span class="mermaid-modal-hint">Scroll to zoom · Drag to pan · Esc to close</span>',
+				'    <div class="mermaid-modal-controls">',
+				'      <button class="mermaid-btn" id="mermaid-zoom-out" title="Zoom Out (–)">−</button>',
+				'      <button class="mermaid-btn" id="mermaid-zoom-reset" title="Reset Zoom">100%</button>',
+				'      <button class="mermaid-btn" id="mermaid-zoom-in" title="Zoom In (+)">+</button>',
+				'      <button class="mermaid-btn mermaid-btn-close" id="mermaid-close" title="Close (Esc)">✕</button>',
+				'    </div>',
+				'  </div>',
+				'  <div class="mermaid-modal-viewport">',
+				'    <div class="mermaid-modal-canvas" id="mermaid-canvas"></div>',
+				'  </div>',
+				'</div>'
+			].join('\n');
+			document.body.appendChild(modal);
+
+			var backdrop = modal.querySelector('.mermaid-modal-backdrop');
+			var closeBtn = modal.querySelector('#mermaid-close');
+			var zoomInBtn = modal.querySelector('#mermaid-zoom-in');
+			var zoomOutBtn = modal.querySelector('#mermaid-zoom-out');
+			var zoomResetBtn = modal.querySelector('#mermaid-zoom-reset');
+			var viewport = modal.querySelector('.mermaid-modal-viewport');
+			var canvas = modal.querySelector('#mermaid-canvas');
+
+			var scale = 1;
+			var panX = 0;
+			var panY = 0;
+			var isDragging = false;
+			var startX = 0;
+			var startY = 0;
+
+			function updateTransform() {
+				canvas.style.transform = 'translate(' + panX + 'px, ' + panY + 'px) scale(' + scale + ')';
+				zoomResetBtn.textContent = Math.round(scale * 100) + '%';
+			}
+
+			function closeModal() {
+				modal.classList.remove('active');
+				document.body.style.overflow = '';
+			}
+
+			backdrop.addEventListener('click', closeModal);
+			closeBtn.addEventListener('click', closeModal);
+
+			document.addEventListener('keydown', function (e) {
+				if (!modal.classList.contains('active')) return;
+				if (e.key === 'Escape') closeModal();
+				if (e.key === '+' || e.key === '=') { scale = Math.min(scale * 1.2, 5); updateTransform(); }
+				if (e.key === '-' || e.key === '_') { scale = Math.max(scale / 1.2, 0.3); updateTransform(); }
+				if (e.key === '0') { scale = 1; panX = 0; panY = 0; updateTransform(); }
+			});
+
+			zoomInBtn.addEventListener('click', function () {
+				scale = Math.min(scale * 1.25, 5);
+				updateTransform();
+			});
+
+			zoomOutBtn.addEventListener('click', function () {
+				scale = Math.max(scale / 1.25, 0.3);
+				updateTransform();
+			});
+
+			zoomResetBtn.addEventListener('click', function () {
+				scale = 1;
+				panX = 0;
+				panY = 0;
+				updateTransform();
+			});
+
+			// Mouse wheel zoom
+			viewport.addEventListener('wheel', function (e) {
+				e.preventDefault();
+				var rect = viewport.getBoundingClientRect();
+				var mouseX = e.clientX - rect.left - rect.width / 2;
+				var mouseY = e.clientY - rect.top - rect.height / 2;
+
+				var zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
+				var newScale = Math.min(Math.max(scale * zoomFactor, 0.3), 6);
+
+				panX = mouseX - (mouseX - panX) * (newScale / scale);
+				panY = mouseY - (mouseY - panY) * (newScale / scale);
+				scale = newScale;
+				updateTransform();
+			}, { passive: false });
+
+			// Pan dragging
+			viewport.addEventListener('mousedown', function (e) {
+				if (e.button !== 0) return;
+				isDragging = true;
+				startX = e.clientX - panX;
+				startY = e.clientY - panY;
+				viewport.style.cursor = 'grabbing';
+			});
+
+			window.addEventListener('mousemove', function (e) {
+				if (!isDragging) return;
+				panX = e.clientX - startX;
+				panY = e.clientY - startY;
+				updateTransform();
+			});
+
+			window.addEventListener('mouseup', function () {
+				if (isDragging) {
+					isDragging = false;
+					viewport.style.cursor = 'grab';
+				}
+			});
+
+			// Touch gestures (pan + pinch zoom)
+			var initialDistance = 0;
+			var initialScale = 1;
+			var touchStartX = 0;
+			var touchStartY = 0;
+
+			viewport.addEventListener('touchstart', function (e) {
+				if (e.touches.length === 1) {
+					isDragging = true;
+					touchStartX = e.touches[0].clientX - panX;
+					touchStartY = e.touches[0].clientY - panY;
+				} else if (e.touches.length === 2) {
+					isDragging = false;
+					initialDistance = Math.hypot(
+						e.touches[0].clientX - e.touches[1].clientX,
+						e.touches[0].clientY - e.touches[1].clientY
+					);
+					initialScale = scale;
+				}
+			}, { passive: true });
+
+			viewport.addEventListener('touchmove', function (e) {
+				if (e.touches.length === 1 && isDragging) {
+					panX = e.touches[0].clientX - touchStartX;
+					panY = e.touches[0].clientY - touchStartY;
+					updateTransform();
+				} else if (e.touches.length === 2 && initialDistance > 0) {
+					var dist = Math.hypot(
+						e.touches[0].clientX - e.touches[1].clientX,
+						e.touches[0].clientY - e.touches[1].clientY
+					);
+					scale = Math.min(Math.max(initialScale * (dist / initialDistance), 0.3), 6);
+					updateTransform();
+				}
+			}, { passive: true });
+
+			viewport.addEventListener('touchend', function () {
+				isDragging = false;
+				initialDistance = 0;
+			}, { passive: true });
+
+			modal._openWithSvg = function (svg) {
+				canvas.innerHTML = '';
+				var clone = svg.cloneNode(true);
+				clone.style.maxWidth = 'none';
+				clone.style.width = 'auto';
+				clone.style.height = 'auto';
+				canvas.appendChild(clone);
+
+				scale = 1;
+				panX = 0;
+				panY = 0;
+				updateTransform();
+
+				modal.classList.add('active');
+				document.body.style.overflow = 'hidden';
+			};
+
+			return modal;
+		}
+
+		function attachClickHandlers() {
+			var wraps = document.querySelectorAll('.mermaid-wrap:not([data-zoom-attached])');
+			wraps.forEach(function (wrap) {
+				wrap.setAttribute('data-zoom-attached', 'true');
+				var btn = wrap.querySelector('.mermaid-expand-btn');
+				var pre = wrap.querySelector('pre.mermaid');
+
+				function handleExpand(e) {
+					var svg = wrap.querySelector('svg');
+					if (!svg) return;
+					e.preventDefault();
+					var modal = ensureModal();
+					modal._openWithSvg(svg);
+				}
+
+				if (btn) btn.addEventListener('click', handleExpand);
+				if (pre) pre.addEventListener('click', handleExpand);
+			});
+		}
+
 		function runMermaid() {
 			var els = document.querySelectorAll('pre.mermaid:not([data-processed])');
-			if (!els.length) return;
+			if (!els.length) {
+				attachClickHandlers();
+				return;
+			}
 
 			if (window.__mermaidModule) {
-				window.__mermaidModule.run({ nodes: els });
+				window.__mermaidModule.run({ nodes: els }).then(attachClickHandlers);
 				return;
 			}
 
 			if (window.__mermaidPromise) {
 				window.__mermaidPromise.then(function (mermaid) {
 					var pending = document.querySelectorAll('pre.mermaid:not([data-processed])');
-					if (pending.length) mermaid.run({ nodes: pending });
+					if (pending.length) {
+						mermaid.run({ nodes: pending }).then(attachClickHandlers);
+					} else {
+						attachClickHandlers();
+					}
 				});
 				return;
 			}
@@ -52,11 +269,15 @@
 					});
 					window.__mermaidModule = mermaid;
 					var allPending = document.querySelectorAll('pre.mermaid:not([data-processed])');
-					if (allPending.length) mermaid.run({ nodes: allPending });
+					if (allPending.length) {
+						mermaid.run({ nodes: allPending }).then(attachClickHandlers);
+					} else {
+						attachClickHandlers();
+					}
 					return mermaid;
 				})
 				.catch(function () {
-					/* CDN unreachable: leave source <pre> as fallback rendering */
+					/* CDN unreachable: fallback to raw pre */
 				});
 		}
 
