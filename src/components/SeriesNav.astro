@@ -1,0 +1,19 @@
+---
+interface Props {
+	prev?: { href: string; title: string };
+	next?: { href: string; title: string };
+	hub: string;
+}
+
+const { prev, next, hub } = Astro.props;
+---
+
+<nav class="series-nav">
+	<span class="series-nav-slot">
+		{prev && <a href={prev.href}>← {prev.title}</a>}
+	</span>
+	<a href={hub} class="series-nav-hub">series index</a>
+	<span class="series-nav-slot series-nav-next">
+		{next && <a href={next.href}>{next.title} →</a>}
+	</span>
+</nav>

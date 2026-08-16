@@ -6,21 +6,24 @@ import Base from '../layouts/Base.astro';
 	<section class="hero">
 		<h1>Lewis Lakerink</h1>
 		<p class="tagline">
-			Software &amp; electronics engineer — home infrastructure, embedded systems, and the
-			occasional HVAC reverse-engineering project.
+			Software engineer at Swinburne University of Technology. After hours: embedded
+			systems, home automation, and prying vendor lock-in out of my own house — one bus at
+			a time.
 		</p>
 		<div class="status-line">
 			<span><span class="dot"></span>home infra: operational</span>
-			<span><span class="dot amber"></span>aircon bridge: live since 2026-08-12</span>
+			<span><span class="dot"></span>aircon bridge: live since 2026-08-12</span>
 		</div>
 	</section>
 
 	<section id="about">
 		<h2><span class="anchor-hash">#</span>about</h2>
-		<div class="callout">
-			<span class="callout-label">placeholder</span>
-			Bio coming soon — background, interests, and the tools I reach for. Watch this space.
-		</div>
+		<p>
+			I build and break things across the software/hardware boundary — Rust on
+			microcontrollers and Pi-class boards, Android internals when a vendor gets in my way,
+			and the home infrastructure to keep all of it observable. Most of it lives on my
+			<a href="https://github.com/retsimx">GitHub</a>; the longer write-ups live here.
+		</p>
 	</section>
 
 	<section id="projects">
@@ -30,13 +33,37 @@ import Base from '../layouts/Base.astro';
 			<h3>Project CB — MyAir Control Bridge</h3>
 			<div class="card-meta">reverse engineering · rust · rs-485 · home hvac</div>
 			<p>
-				Replacing the OEM wall tablet's role as the RS-485 talker on an Advantage Air Control
-				Box with a Raspberry Pi Zero W running a Rust daemon — single-session WebSocket
-				mailbox API, live in production since August 2026.
+				Replacing the vendor control path of a ducted Advantage Air / MyAir system:
+				repackaged vendor apps, a Kotlin reimplementation of the service, a Rust
+				register-mailbox daemon, and a Pi Zero W in the ceiling. Five-part write-up.
 			</p>
-			<div class="card-links"><a href="/projects/myair-bridge">read more →</a></div>
+			<div class="card-links">
+				<a href="/projects/myair-bridge">read the series →</a>
+				<a href="https://github.com/retsimx/cb-daemon">cb-daemon</a>
+				<a href="https://github.com/retsimx/aaservice">aaservice</a>
+			</div>
 		</div>
 
-		<p class="status-line"><span class="dot amber"></span>more projects to be added</p>
+		<h3>other things I've built</h3>
+		<ul>
+			<li>
+				<a href="https://github.com/retsimx/garagedoorcontroller">garagedoorcontroller</a>
+				· <a href="https://github.com/retsimx/garagelight">garagelight</a> ·
+				<a href="https://github.com/retsimx/garagebeam">garagebeam</a> — a Pico W / Rust
+				garage stack: door control, lighting, and a beam sensor
+			</li>
+			<li>
+				<a href="https://github.com/retsimx/skylights">skylights</a> — ESP32 control of
+				Velux skylights over MQTT
+			</li>
+			<li>
+				<a href="https://github.com/retsimx/tlsr8266_mesh">tlsr8266_mesh</a> — new Rust
+				firmware for Tuya BLE smart-light modules (TLSR8266)
+			</li>
+			<li>
+				<a href="https://github.com/retsimx/crosbridge-ai">crosbridge-ai</a> — an
+				OpenAI-compatible bridge to the ChromeOS Prompt API / NPU from Crostini
+			</li>
+		</ul>
 	</section>
 </Base>

@@ -1,4 +1,38 @@
-## Development
+## Site conventions
+
+This is a **public** personal engineering blog (Astro, static, deployed to GitHub Pages
+via `.github/workflows/deploy.yml` on push to `main`).
+
+### Privacy / redaction rules (hard requirements)
+
+Content must never include identifying or sensitive information:
+
+- No LAN IPs, MAC addresses, Wi-Fi SSIDs, or VLAN numbers — write `ws://<pi>:2026`, "the
+  tablet", "a dedicated IoT VLAN", etc.
+- No device/unit unique IDs (e.g. the MyAir unit id) — use `xxxxx` placeholders.
+- No secrets beyond what the owner has explicitly approved for publication (currently:
+  the vendor apps' hardcoded AES key and the throwaway `lobotomy` keystore credentials).
+- Photos must be EXIF/GPS-stripped before committing (see photo pipeline below).
+
+### Structure
+
+- `src/layouts/Base.astro` — site shell (terminal-prompt header, nav, footer)
+- `src/layouts/Post.astro` — series-part layout (badges, prev/next nav)
+- `src/data/series.ts` — series metadata; add entries here when adding series parts
+- `src/components/Mermaid.astro` — client-side mermaid via jsDelivr CDN (`is:inline`
+  script; falls back to showing raw source if the CDN is unreachable). No local build
+  step for diagrams — keep it that way.
+- `src/styles/global.css` — hand-rolled dark theme; no CSS framework
+
+### Photos
+
+Pipeline: `convert IN.jpg -auto-orient -resize '1600x1600>' -strip -quality 82 OUT.jpg`
+(ImageMagick). Store under `public/photos/<topic>/`, reference with `loading="lazy"`.
+
+### Deployment
+
+Push to `main` → GitHub Actions builds and deploys. Pages source is set to
+"GitHub Actions" (`build_type: workflow`), not branch deploy.
 
 When starting the dev server, use background mode:
 

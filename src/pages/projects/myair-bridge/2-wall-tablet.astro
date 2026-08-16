@@ -1,0 +1,138 @@
+---
+import Post from '../../../layouts/Post.astro';
+---
+
+<Post title="Vendor software on my hardware" part={2} date="2026-08-16">
+	<p class="tagline">
+		Step one of de-locking the system: keep the vendor's apps, but run them on hardware and
+		an OS that I control. Enter a 2015 Samsung Galaxy Tab A 8.0.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>why a decade-old tablet</h2>
+	<p>
+		The OEM wall unit is, at its heart, a low-end 8" Android tablet with a custom
+		power/data connector. Its jobs are modest: render the MyPlace UI, run the vendor's
+		background service, and talk to the control box. A <strong>Samsung Galaxy Tab A 8.0
+		(SM-T350, <code>gt58wifi</code>)</strong> from 2015 — which I already had on hand —
+		is overqualified for all three. It also has something the OEM tablet doesn't: an
+		unlockable bootloader and a working custom-ROM scene.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the stack</h2>
+	<table>
+		<thead>
+			<tr><th>layer</th><th>choice</th><th>why</th></tr>
+		</thead>
+		<tbody>
+			<tr>
+				<td>OS</td>
+				<td>LineageOS 18.1 (Android 11), unofficial <code>gt58wifi</code> build</td>
+				<td>Modern-ish Android on 2015 hardware; no Google services required</td>
+			</tr>
+			<tr>
+				<td>Root</td>
+				<td>Magisk 30.7, Zygisk on</td>
+				<td>Systemless root + module framework for the appliance scripts</td>
+			</tr>
+			<tr>
+				<td>Remote access</td>
+				<td>SimpleSSHD on port 2222, key-only</td>
+				<td>The tablet is headless infrastructure; SSH is the admin interface</td>
+			</tr>
+			<tr>
+				<td>Vendor apps</td>
+				<td><code>myair5</code> (MyPlace UI) + <code>aaservice2</code> (background service)</td>
+				<td>The actual control surface, kept intact</td>
+			</tr>
+			<tr>
+				<td>Network</td>
+				<td>Dedicated IoT VLAN, static DHCP reservation</td>
+				<td>Vendor apps get no route to anything they don't need</td>
+			</tr>
+		</tbody>
+	</table>
+
+	<h2><span class="anchor-hash">#</span>the one check that matters</h2>
+	<p>
+		The vendor apps refuse to run on hardware they don't recognise — the infamous
+		"Not on AA Hardware" toast. The check is a string comparison against
+		<code>Build.MODEL</code>, and the accepted model for the 8" MyAir5 tablet is
+		<code>PIC8GS10</code>. A comment on the Hacker News thread for the
+		<a href="https://blog.hopefullyuseful.com/blog/advantage-air-ezone-tablet-diy-repair/"
+			>upstream repair story</a
+		>
+		had already pointed out that on a rooted tablet you can just change the model prop and
+		everything works — and that's exactly the approach:
+	</p>
+	<ul>
+		<li>
+			<strong>MagiskHide Props Config</strong> module, configured with a late-stage custom
+			prop: <code>ro.product.model=PIC8GS10</code>
+		</li>
+		<li>
+			A belt-and-braces Magisk boot script that <code>resetprop</code>s the same value
+		</li>
+	</ul>
+	<p>
+		No APK modification needed for this step — the apps verify the device's identity, and
+		root lets the device lie about it fluently:
+	</p>
+	<pre><code>$ ssh tablet
+$ su -c 'getprop ro.product.model'
+PIC8GS10</code></pre>
+
+	<h2><span class="anchor-hash">#</span>making it an appliance</h2>
+	<p>
+		A wall-mounted control panel has a different reliability bar to a personal tablet. It's
+		powered 24/7, must survive reboots unattended, and should need zero maintenance. The
+		Magisk <code>service.d</code> boot scripts handle this:
+	</p>
+	<ul>
+		<li>
+			<strong>Battery hold at 40–45%</strong> — the tablet runs wall-powered forever, so a
+			boot loop script toggles <code>batt_slate_mode</code> to keep the Li-ion in its happy
+			band instead of cooking at 100%
+		</li>
+		<li>
+			<strong>Watchdog</strong> — every 5 s, relaunch the MyPlace UI if it's missing, and
+			start the vendor service if <code>dumpsys</code> shows it absent (the service has no
+			boot receiver, so process presence alone isn't enough)
+		</li>
+		<li>
+			<strong>Doze whitelist + background appops</strong> — the battery-hold behaviour
+			makes Android think the tablet is "on battery", which invites Doze; both vendor apps
+			get whitelisted
+		</li>
+		<li>
+			<strong>zygisk-detach</strong> — detaches both vendor packages from the Play Store
+			so an unattended "update" can't replace the repackaged apps (see part 3)
+		</li>
+		<li>
+			<strong>Telemetry</strong> — battery and system metrics pushed to InfluxDB every
+			60 s, graphed in Grafana. The control panel is monitored like any other host in the
+			house.
+		</li>
+		<li>
+			<strong>RAM-only logging</strong> — logd buffers sized and kept in RAM; nothing
+			wears out the SD card, nothing persists across reboot
+		</li>
+	</ul>
+
+	<div class="callout">
+		<span class="callout-label">reproducibility</span>
+		The full rebuild runbook — every script, every setting, every APK version — lives in my
+		private infrastructure docs, so a brand-new identical tablet can be brought to the same
+		state from scratch. The details above are the transferable parts; the omitted bits are
+		just my network specifics.
+	</div>
+
+	<h2><span class="anchor-hash">#</span>where this leaves us</h2>
+	<p>
+		At this point the system is <em>functionally</em> stock — same apps, same UI, same
+		features — but every layer underneath the apps is mine. That buys two things: the
+		tablet is now replaceable commodity hardware, and root access opens the door to the
+		next step. Because the vendor apps still enforce a signature permission on their
+		inter-app broadcasts, and my own service implementation can't hold the vendor's signing
+		key. That's part 3.
+	</p>
+</Post>

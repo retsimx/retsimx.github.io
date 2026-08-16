@@ -1,0 +1,28 @@
+---
+import Base from './Base.astro';
+import SeriesNav from '../components/SeriesNav.astro';
+import { seriesParts, partHref, seriesHub } from '../data/series';
+
+interface Props {
+	title: string;
+	part: number;
+	date: string;
+}
+
+const { title, part, date } = Astro.props;
+
+const prev = part > 1 ? { href: partHref(seriesParts[part - 2]), title: seriesParts[part - 2].title } : undefined;
+const next = part < seriesParts.length ? { href: partHref(seriesParts[part]), title: seriesParts[part].title } : undefined;
+---
+
+<Base title={title}>
+	<p><a href={seriesHub}>← Project CB — MyAir Control Bridge</a></p>
+	<div class="post-meta">
+		<span class="badge">part {part} of {seriesParts.length}</span>
+		<span class="badge">{date}</span>
+	</div>
+	<h1>{title}</h1>
+	<SeriesNav hub={seriesHub} prev={prev} next={next} />
+	<slot />
+	<SeriesNav hub={seriesHub} prev={prev} next={next} />
+</Base>

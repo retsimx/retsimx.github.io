@@ -1,0 +1,87 @@
+---
+import Base from '../../../layouts/Base.astro';
+import Mermaid from '../../../components/Mermaid.astro';
+import { seriesParts, partHref } from '../../../data/series';
+---
+
+<Base title="Project CB — MyAir Control Bridge">
+	<p><a href="/">← back to home</a></p>
+
+	<h1>Project CB — MyAir Control Bridge</h1>
+	<div style="margin: 0.75rem 0 1.5rem">
+		<span class="badge live">● live since 2026-08-12</span>
+		<span class="badge">rust</span>
+		<span class="badge">rs-485</span>
+		<span class="badge">websocket</span>
+		<span class="badge">android</span>
+		<span class="badge">reverse engineering</span>
+	</div>
+
+	<p class="tagline">
+		How I replaced the vendor control path of my ducted air conditioning — a wall tablet
+		running repackaged vendor apps, a Rust daemon speaking reverse-engineered RS-485, and a
+		Pi Zero W in a tupperware container in the ceiling — without losing a single feature,
+		and with instant rollback the whole way.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the final state</h2>
+	<Mermaid>{`flowchart LR
+		CB["Advantage Air Control Box<br/>(ceiling)"]
+		PI["Pi Zero W — airconcb<br/>cb-daemon (Rust)"]
+		TAB["Wall tablet — Galaxy Tab A 8.0<br/>myair5 + aaservice2"]
+		HOME["Home automations"]
+
+		CB <-->|"RS-485 half-duplex<br/>57600 8N1"| PI
+		PI <-->|"WebSocket :2026<br/>JSON mailbox stream"| TAB
+		TAB <-->|"HTTP :2025<br/>(vendor API)"| HOME`}</Mermaid>
+
+	<p>
+		Every register read and write between the vendor UI and the control box now travels
+		through hardware and software I control. The vendor apps still run — repackaged to
+		drop their signing requirements — so the wall panel looks and behaves exactly as it
+		always did.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the series</h2>
+	<ul class="series-list">
+		{seriesParts.map((p) => (
+			<li>
+				<span class="series-n">part {p.n}</span>
+				<a href={partHref(p)}>{p.title}</a>
+				<span class="series-blurb">{p.blurb}</span>
+			</li>
+		))}
+	</ul>
+
+	<h2><span class="anchor-hash">#</span>repositories</h2>
+	<ul>
+		<li>
+			<a href="https://github.com/retsimx/cb-daemon">retsimx/cb-daemon</a> — the Rust
+			register-mailbox sync daemon (AOA/TTY → WebSocket mailbox API)
+		</li>
+		<li>
+			<a href="https://github.com/retsimx/aaservice">retsimx/aaservice</a> — the Kotlin
+			reimplementation of the vendor AA Service app, dual-transport (USB | WebSocket)
+		</li>
+	</ul>
+
+	<h2><span class="anchor-hash">#</span>standing on the shoulders of</h2>
+	<ul>
+		<li>
+			<a href="https://github.com/gundy/aa_interop">gundy/aa_interop</a> — the
+			reverse-engineered CB↔tablet RS-485 protocol this project is built on
+		</li>
+		<li>
+			<a href="https://blog.hopefullyuseful.com/blog/advantage-air-ezone-tablet-diy-repair/"
+				>“Air Con: $1697 for an on/off switch”</a
+			> — the OEM-tablet DIY repair write-up that proves how common this failure mode is
+		</li>
+	</ul>
+
+	<h2><span class="anchor-hash">#</span>status</h2>
+	<div class="status-line">
+		<span><span class="dot"></span>bridge: live in production</span>
+		<span><span class="dot"></span>vendor UI: fully functional</span>
+		<span><span class="dot amber"></span>write-up: in progress</span>
+	</div>
+</Base>

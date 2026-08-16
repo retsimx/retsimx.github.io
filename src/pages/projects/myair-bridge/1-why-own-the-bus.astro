@@ -1,0 +1,126 @@
+---
+import Post from '../../../layouts/Post.astro';
+import Mermaid from '../../../components/Mermaid.astro';
+---
+
+<Post title="Why own the bus" part={1} date="2026-08-16">
+	<p class="tagline">
+		My ducted air conditioning is controlled by a cheap Android tablet on the wall. This
+		series is about replacing everything between that tablet and the control box in the
+		ceiling — before the vendor's hardware gets to choose for me.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the system</h2>
+	<p>
+		The house has a ducted reverse-cycle system: a Daikin unit doing the actual heating and
+		cooling, and an Advantage Air "MyAir" control box in the ceiling that drives the zone
+		dampers, reads the temperature sensors, and owns the control logic. The user-facing half
+		of the system is a wall-mounted Android tablet running the vendor's MyPlace app, talking
+		to the control box over a single cable that carries both power and data.
+	</p>
+	<p>
+		It works well. The zoning is genuinely good. The problem isn't what the system does —
+		it's who owns the ability to keep it doing that.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the problem</h2>
+	<p>
+		The wall tablet is the weakest link in the whole system, and it's also the part the
+		vendor treats as a fuse: when it dies, the official answer is a new control system. The
+		write-up at
+		<a href="https://blog.hopefullyuseful.com/blog/advantage-air-ezone-tablet-diy-repair/"
+			>blog.hopefullyuseful.com</a
+		>
+		tells the story well — OEM tablet suffers the classic eMMC failure six months out of
+		warranty, support quotes <strong>$1,697</strong> for a replacement tablet, control box,
+		and wireless sensors, because "new phones come out every year". The air conditioner was
+		fine. The control box was fine. They were being asked to replace a five-figure system's
+		control electronics because the cheapest component in the chain failed.
+	</p>
+	<p>
+		That post has a happy ending (a 2015 Galaxy Tab 4 and some apktool surgery), and the
+		Hacker News discussion around it kicked off
+		<a href="https://github.com/gundy/aa_interop">aa_interop</a> — a community effort to
+		document the hardware, protocol, and API. But the structural problem remains: if you run
+		this system as shipped, your ability to turn your heater on is gated by a vendor's
+		app-store listing, a vendor-signed app pair, and a tablet with a known mortality date.
+	</p>
+	<p>
+		I didn't want to wait for my turn. The swap was <strong>proactive</strong>: the OEM
+		tablet still worked when I started. The motivator was avoiding vendor lock-in in the
+		future — owning the control path end-to-end while everything was healthy enough to
+		experiment on safely.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>goals</h2>
+	<ul>
+		<li>
+			<strong>Zero functionality loss.</strong> The wall panel must look and behave exactly
+			as it does stock — zones, schedules, temps, the lot. Non-negotiable; other people live
+			here.
+		</li>
+		<li>
+			<strong>Instant rollback.</strong> Every stage must be reversible in minutes, with
+			physical-layer rollback as the escape hatch at every step.
+		</li>
+		<li>
+			<strong>Local-first.</strong> No cloud dependency in the control path.
+		</li>
+		<li>
+			<strong>Reproducible.</strong> Every step documented well enough that someone else
+			(or future-me, post-amnesia) can repeat it. This series is that documentation.
+		</li>
+	</ul>
+
+	<h2><span class="anchor-hash">#</span>constraints</h2>
+	<ul>
+		<li>
+			<strong>One talker on the bus.</strong> The control box speaks half-duplex RS-485 and
+			expects exactly one tablet-side endpoint. Two simultaneous talkers corrupt frames —
+			so every migration step has to be a clean handover, never a shared bus.
+		</li>
+		<li>
+			<strong>No vendor documentation.</strong> Everything known about the wire protocol
+			comes from <a href="https://github.com/gundy/aa_interop">aa_interop</a>, which
+			reverse-engineered a single CB9 control box. Verify everything against this install.
+		</li>
+		<li>
+			<strong>It's production.</strong> This is the house's heating and cooling. Debugging
+			sessions have a comfort budget.
+		</li>
+	</ul>
+
+	<h2><span class="anchor-hash">#</span>where we end up</h2>
+	<Mermaid>{`flowchart TB
+		subgraph before["Before"]
+			direction LR
+			CB1["Control Box"] <-->|"RS-485 + power"| OEM["OEM wall tablet<br/>(locked-down vendor Android)"]
+		end
+		subgraph after["After"]
+			direction LR
+			CB2["Control Box"] <-->|"RS-485"| PI["Pi Zero W<br/>cb-daemon (Rust)"]
+			PI <-->|"WebSocket"| TAB["My tablet, my OS<br/>(vendor apps, repackaged)"]
+		end
+		before ==> after`}</Mermaid>
+
+	<h2><span class="anchor-hash">#</span>the timeline</h2>
+	<table>
+		<thead>
+			<tr><th>date</th><th>milestone</th></tr>
+		</thead>
+		<tbody>
+			<tr><td>2026-07-03</td><td>Vendor apps decompiled; broadcast protocol mapped; "lobotomised" (signature-relaxed) APKs built and installed (<a href="/projects/myair-bridge/3-app-surgery/">part 3</a>)</td></tr>
+			<tr><td>~2026-07</td><td>Wall tablet rebuilt: LineageOS, Magisk, model-prop spoof (<a href="/projects/myair-bridge/2-wall-tablet/">part 2</a>); Kotlin reimplementation of the vendor service app begun</td></tr>
+			<tr><td>2026-08-01</td><td>Pi Zero W bridge parts ordered (<a href="/projects/myair-bridge/5-pi-in-the-ceiling/">part 5</a>)</td></tr>
+			<tr><td>2026-08-02</td><td>Interface design doc: single-session WebSocket mailbox API (<a href="/projects/myair-bridge/4-cb-daemon/">part 4</a>)</td></tr>
+			<tr><td>2026-08-12</td><td>Pi installed in the ceiling; live cutover from the tablet's USB path</td></tr>
+			<tr><td>2026-08-13</td><td>Broker-protocol stack deployed (multi-session, typed registers, write policy, failsafes)</td></tr>
+			<tr><td>2026-08-16</td><td>Tablet-local daemon stack removed; tablet is now a pure WebSocket client. This series published.</td></tr>
+		</tbody>
+	</table>
+
+	<p>
+		Next: the wall tablet — how a 2015 Galaxy Tab A became a better vendor appliance than
+		the vendor's own hardware.
+	</p>
+</Post>

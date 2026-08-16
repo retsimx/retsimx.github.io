@@ -1,0 +1,149 @@
+---
+import Post from '../../../layouts/Post.astro';
+import Mermaid from '../../../components/Mermaid.astro';
+---
+
+<Post title="cb-daemon: a Rust mailbox for the control box" part={4} date="2026-08-16">
+	<p class="tagline">
+		The control box speaks a reverse-engineered, XML-flavoured protocol over RS-485.
+		cb-daemon is a small Rust service that speaks it fluently — and exposes the whole
+		register bank as a clean JSON WebSocket API.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the wire protocol</h2>
+	<p>
+		Everything known about the CB↔tablet link comes from
+		<a href="https://github.com/gundy/aa_interop">aa_interop</a>, reverse-engineered from a
+		single CB9. The physical layer is half-duplex RS-485 at 57600 8N1, carried (with ~14 V
+		power) on what looks like an Ethernet cable. Messages are framed in a custom envelope:
+	</p>
+	<pre><code>&lt;U&gt;PAYLOAD&lt;/U=CRC&gt;      e.g.   &lt;U&gt;Ping&lt;/U=db&gt;</code></pre>
+	<p>
+		where <code>CRC</code> is two lowercase hex digits of a CRC-8 (poly <code>0xB2</code>,
+		init <code>0x00</code>, final XOR <code>0xFF</code>, reflected). Messages from the CB
+		are separated by a literal space.
+	</p>
+	<p>
+		Bus arbitration is delightfully primitive: the CB emits a <code>Ping</code> roughly
+		every second, and the gap after it is the tablet's transmit window. With no tablet
+		connected, the bus is an endless <code>Ping … Ping … Ping</code> heartbeat — which makes
+		bring-up testing trivially easy:
+	</p>
+	<pre><code>stty -F /dev/ttyUSB0 57600 raw -echo
+cat /dev/ttyUSB0     # &lt;U&gt;Ping&lt;/U=db&gt; &lt;U&gt;Ping&lt;/U=db&gt; …</code></pre>
+
+	<h2><span class="anchor-hash">#</span>registers, not messages</h2>
+	<p>
+		The protocol models the control box as a bank of <strong>7-byte register mailboxes</strong>,
+		addressed by (unit type, unit id, register id). The tablet keeps a mirror in sync via a
+		poll loop:
+	</p>
+
+	<Mermaid>{`sequenceDiagram
+		participant C as Control Box
+		participant D as cb-daemon
+		Note over C,D: first contact
+		C->>D: Ping
+		D->>C: getSystemData
+		C-->>D: CAN2 in use
+		D->>C: setCAN 0701000000600000000000000  (request full dump)
+		C-->>D: getCAN 1 …all registers…
+		D->>C: ackCAN 1
+		Note over C,D: steady state (~1 Hz Ping slot)
+		loop poll loop
+			C->>D: Ping
+			D->>C: setCAN (empty, or pending writes)
+			C-->>D: getCAN 1 (only registers that changed)
+			D->>C: ackCAN 1
+		end`}</Mermaid>
+
+	<p>
+		The useful registers, as documented by aa_interop and verified against this install:
+	</p>
+	<table>
+		<thead>
+			<tr><th>reg</th><th>name</th><th>contents</th></tr>
+		</thead>
+		<tbody>
+			<tr><td><code>01</code></td><td>zone config</td><td>zone count, constant zones, filter-clean flag</td></tr>
+			<tr><td><code>02</code></td><td>unit activation</td><td>AC brand (Daikin <code>0x11</code>, Panasonic <code>0x12</code>…), installer activation state</td></tr>
+			<tr><td><code>03</code></td><td>zone state</td><td>zone #, open/closed + damper %, sensor type, set &amp; measured temp</td></tr>
+			<tr><td><code>04</code></td><td>zone limits</td><td>min/max damper, motion config, RSSI</td></tr>
+			<tr><td><code>05</code></td><td>system status</td><td>power, mode (cool/heat/vent/dry/auto), fan, set temp, MyZone, fresh air</td></tr>
+			<tr><td><code>06</code></td><td>flush</td><td>request a full register dump</td></tr>
+			<tr><td><code>08</code></td><td>aircon error</td><td>ASCII error code (e.g. <code>AA1</code>)</td></tr>
+			<tr><td><code>12</code></td><td>sensor pairing</td><td>RF sensor UID ↔ zone attachment</td></tr>
+		</tbody>
+	</table>
+
+	<h2><span class="anchor-hash">#</span>the daemon</h2>
+	<p>
+		<a href="https://github.com/retsimx/cb-daemon">retsimx/cb-daemon</a> is a Rust workspace
+		built in layers, each with golden tests against captured frames:
+	</p>
+	<ul>
+		<li><code>aa-crc</code> / <code>aa-frame</code> — the CRC-8 and the <code>&lt;U&gt;…&lt;/U=xx&gt;</code> codec</li>
+		<li><code>aa-registers</code> — the CAN2 wire codec and the in-memory register bank</li>
+		<li><code>aa-link</code> — a <code>Link</code> trait with two backends: <strong>AOA</strong> (<code>/dev/usb_accessory</code>, for running on the Android tablet) and <strong>TTY</strong> (USB-serial, for the Pi) — plus a mock link for tests</li>
+		<li><code>aa-engine</code> — the CB session state machine: negotiation, dump, steady poll, dirty-register tracking</li>
+		<li><code>aa-mailbox</code> — the bank ↔ JSON mapping</li>
+		<li>an axum WebSocket server exposing the whole thing on <code>:2026/v1/mailbox-stream</code></li>
+	</ul>
+
+	<p>
+		Two design decisions worth mentioning:
+	</p>
+	<ul>
+		<li>
+			<strong>Single active client.</strong> A second WebSocket connection is rejected
+			immediately with close code <code>4009</code>. One writer means no split-brain state
+			mutations on a half-duplex bus — enforcement at the door, not discipline in the
+			clients.
+		</li>
+		<li>
+			<strong>Typed mailboxes, not raw registers.</strong> Clients see
+			<code>system_status.power = "on"</code>, not byte 0 of register 05. The daemon owns
+			the 7-byte encoding, the write policies, and the resync handshake.
+		</li>
+	</ul>
+
+	<p>A snapshot frame, fresh off the wire:</p>
+	<pre><code>{`{
+  "type": "mailbox_snapshot",
+  "unit_id": "xxxxx",
+  "system_status": { "power": "on", "mode": "cool", "fan": "high",
+                     "target_temp_c": 24.0, "myzone_id": 1 },
+  "zones": { "1": { "open": true, "damper_pct": 100,
+                    "measured_temp_c": 22.5, "target_temp_c": 23.0 } }
+}`}</code></pre>
+
+	<h2><span class="anchor-hash">#</span>tablet first, Pi second</h2>
+	<p>
+		The daemon didn't debut on the Pi — it first ran <em>on the wall tablet itself</em>,
+		as a Magisk module using the AOA backend against the same USB accessory the vendor
+		service used. That de-risked the protocol engine against the live control box while the
+		tablet was still the bus talker, and made the Pi cutover (part 5) a config change
+		rather than a leap of faith. The rebuilt
+		<a href="https://github.com/retsimx/aaservice">aaservice2</a> gained its dual-mode
+		transport at the same time: USB mode for the stock path, WS mode pointing at the
+		daemon — first at loopback, later at the Pi.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>hardening: the broker protocol</h2>
+	<p>
+		The first WS API was deliberately minimal. A second pass (tracked as the "Generic
+		Register-Broker Protocol" epic in the repo) turned it into something I'd trust other
+		house services against: multi-session support, typed decode/encode for every register,
+		a read verb, per-register write policies with validation ranges, the JZ18 handshake,
+		daemon-initiated keepalive, and an idle failsafe — because a daemon that can arm the
+		aircon's default-on state <em>must</em> notice when its client has silently died.
+		Fourteen follow-up defects came out of soaking it against the live bus (CRC-failed
+		frame handling, NACK'd writes silently lost, ack windows on a silent bus…). All closed;
+		all captured as issues in the repo if you want the gory details.
+	</p>
+
+	<p>
+		Next: the hardware half — a Pi Zero W, a buck converter, a fuse, and a plastic food
+		container, installed in the ceiling.
+	</p>
+</Post>

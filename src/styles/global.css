@@ -317,6 +317,117 @@ td code {
 	margin-bottom: 0.25rem;
 }
 
+/* ---------- blog posts ---------- */
+
+.post-meta {
+	margin: 0.5rem 0 0.75rem;
+}
+
+.series-nav {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 1rem;
+	font-family: var(--mono);
+	font-size: 0.82rem;
+	border-top: 1px solid var(--border);
+	border-bottom: 1px solid var(--border);
+	padding: 0.6rem 0;
+	margin: 1.5rem 0 2rem;
+}
+
+.series-nav .series-nav-slot {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.series-nav .series-nav-next {
+	text-align: right;
+}
+
+.series-nav .series-nav-hub {
+	color: var(--muted);
+	flex-shrink: 0;
+}
+
+.series-list {
+	list-style: none;
+	padding: 0;
+	margin: 1rem 0;
+}
+
+.series-list li {
+	margin-bottom: 0.9rem;
+}
+
+.series-list .series-n {
+	font-family: var(--mono);
+	color: var(--muted);
+	margin-right: 0.6rem;
+}
+
+.series-list .series-blurb {
+	display: block;
+	color: var(--muted);
+	font-size: 0.9rem;
+	margin-left: 2.1rem;
+}
+
+/* ---------- diagrams / figures ---------- */
+
+.mermaid-wrap {
+	margin: 1.25rem 0;
+}
+
+.mermaid-wrap pre.mermaid {
+	display: flex;
+	justify-content: center;
+}
+
+.mermaid-wrap pre.mermaid svg {
+	max-width: 100%;
+	height: auto;
+}
+
+figure {
+	margin: 1.5rem 0;
+}
+
+figure img {
+	max-width: 100%;
+	height: auto;
+	border-radius: 8px;
+	border: 1px solid var(--border);
+	display: block;
+}
+
+figcaption {
+	font-family: var(--mono);
+	font-size: 0.78rem;
+	color: var(--muted);
+	margin-top: 0.5rem;
+}
+
+.photo-grid {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 0.75rem;
+	margin: 1.5rem 0;
+}
+
+.photo-grid figure {
+	margin: 0;
+}
+
+@media (max-width: 560px) {
+	.photo-grid {
+		grid-template-columns: 1fr;
+	}
+}
+
 /* ---------- footer ---------- */
 
 .site-footer {

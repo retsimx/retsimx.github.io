@@ -1,0 +1,201 @@
+---
+import Post from '../../../layouts/Post.astro';
+import Mermaid from '../../../components/Mermaid.astro';
+---
+
+<Post title="Lobotomising the vendor apps" part={3} date="2026-08-16">
+	<p class="tagline">
+		The vendor's two apps talk to each other over Android broadcasts guarded by a
+		signature-level permission. My replacement service can't hold the vendor's signing key —
+		so the apps got a small, precise piece of surgery.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>how the vendor apps talk</h2>
+	<p>
+		MyAir's Android stack is two apps: <code>myair5</code> (the MyPlace UI) and
+		<code>aaservice</code> (the background service that owns the USB link to the control
+		box). They communicate via system broadcasts — and reading the decompiled source, every
+		message type exists in <strong>two parallel variants</strong>:
+	</p>
+
+	<table>
+		<thead>
+			<tr><th>channel</th><th>guard</th><th>payload</th></tr>
+		</thead>
+		<tbody>
+			<tr>
+				<td><code>MESSAGE_FROM_CB_SECURE</code>, <code>CAN_TO_CB</code>, <code>BROADCAST_CAN_TO_CB</code>, <code>BACKUP_MESSAGE</code>…</td>
+				<td><code>com.air.android.secure_comms</code> — <code>protectionLevel="signature"</code></td>
+				<td>plaintext strings</td>
+			</tr>
+			<tr>
+				<td><code>…_NO_PERMISSION</code> variants</td>
+				<td>none</td>
+				<td>AES-encrypted <code>byte[]</code></td>
+			</tr>
+		</tbody>
+	</table>
+
+	<p>
+		The "encrypted" channel is security theatre, incidentally: both apps embed the same
+		hardcoded AES key, recoverable by anyone who decompiles the publicly distributed APK.
+	</p>
+	<pre><code>Key:   +07UDwu4yLmTkTpOYxe9Vc4K/2slMFRWrcvN2tuFxvc=   (Base64)
+Alg:   AES/CBC/PKCS7Padding, IV = 16 zero bytes
+Quirk: 3 random bytes are prepended to the plaintext before
+       encryption (strip them after decrypting)</code></pre>
+
+	<Mermaid>{`sequenceDiagram
+		participant M as myair5 (MyPlace UI)
+		participant A as aaservice
+		participant C as Control Box
+		M->>A: GET_DATA / GET_ALL_DATA (no guard)
+		A->>C: USB / RS-485 register poll
+		C-->>A: register data
+		A->>M: MESSAGE_FROM_CB (unguarded, plaintext)
+		A->>M: MESSAGE_FROM_CB_SECURE (signature-guarded)
+		Note over M,A: the guarded lane only flows if both apps<br/>share a signing key`}</Mermaid>
+
+	<h2><span class="anchor-hash">#</span>the wall</h2>
+	<p>
+		My rebuilt service (<code>aaservice2</code>, package renamed, signed with my own key)
+		can't send or receive the signature-guarded broadcasts: the framework checks the
+		caller's signing certificate against the certificate of the app that declared the
+		permission. Root alone doesn't bypass this — the check lives in
+		<code>PackageManagerService</code>, not in either app.
+	</p>
+	<p>
+		Options considered:
+	</p>
+	<ul>
+		<li>
+			<strong>LSPosed hook</strong> on <code>PackageManagerService.checkPermission()</code>
+			to return GRANTED for <code>secure_comms</code> — elegant, survives app updates, but
+			adds a framework-hooking dependency to a wall-mounted appliance
+		</li>
+		<li>
+			<strong>Use only the <code>_NO_PERMISSION</code> lanes</strong> — covers most of the
+			protocol, but not every receiver path
+		</li>
+		<li>
+			<strong>Patch the apps' manifests</strong> so the permission is no longer
+			signature-guarded at all — crude name, clean result: <em>the lobotomy</em>
+		</li>
+	</ul>
+
+	<h2><span class="anchor-hash">#</span>the lobotomy</h2>
+	<p>
+		The entire modification is two lines across two manifests:
+		<code>protectionLevel="signature"</code> → <code>"normal"</code> for
+		<code>com.air.android.secure_comms</code> (and MyPlace's
+		<code>DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION</code>). Both apps are then rebuilt and
+		re-signed with a throwaway key — and since both are now signed by the <em>same</em>
+		throwaway key, even the remaining signature semantics are satisfied. Any app on the
+		device can now join the broadcast protocol.
+	</p>
+	<p>The full, reproducible recipe:</p>
+
+	<pre><code># 1. Decompile
+apktool d MyPlace_15.1514.apk -o myplace/decompiled
+apktool d app-aaservice2-v14.150.apk -o aaservice/decompiled
+
+# 2. Relax the permission guard in both manifests
+sed -i 's/protectionLevel="signature"/protectionLevel="normal"/g' \
+  myplace/decompiled/AndroidManifest.xml \
+  aaservice/decompiled/AndroidManifest.xml
+
+# 3. Only ONE installed app may declare a permission — keep the
+#    &lt;permission&gt; block in aaservice, delete it from MyPlace's manifest
+#    (MyPlace keeps its &lt;uses-permission&gt;)
+
+# 4. MyPlace ships native libs page-aligned &amp; uncompressed; apktool's
+#    rebuild breaks that, so let the package manager extract them instead
+sed -i 's/extractNativeLibs="false"/extractNativeLibs="true"/' \
+  myplace/decompiled/AndroidManifest.xml
+
+# 5. Rebuild
+apktool b myplace/decompiled -o MyPlace-lobotomized-unsigned.apk
+apktool b aaservice/decompiled -o aaservice-lobotomized-unsigned.apk
+
+# 6. Zipalign (mandatory for the MyPlace rebuild)
+zipalign -f 4 MyPlace-lobotomized-unsigned.apk MyPlace-aligned.apk
+
+# 7. Sign with a throwaway key
+keytool -genkey -keystore lobotomy.jks -alias lobotomy \
+  -keyalg RSA -keysize 2048 -validity 10000
+apksigner sign --ks lobotomy.jks --ks-key-alias lobotomy \
+  --out MyPlace-lobotomized.apk MyPlace-aligned.apk
+apksigner sign --ks lobotomy.jks --ks-key-alias lobotomy \
+  --out aaservice-lobotomized.apk aaservice-lobotomized-unsigned.apk</code></pre>
+
+	<h2><span class="anchor-hash">#</span>things that went wrong (so you don't have to)</h2>
+	<table>
+		<thead>
+			<tr><th>error</th><th>cause</th><th>fix</th></tr>
+		</thead>
+		<tbody>
+			<tr>
+				<td><code>INSTALL_FAILED_INVALID_APK: Failed to extract native libraries</code></td>
+				<td>MyPlace sets <code>extractNativeLibs="false"</code> — its <code>.so</code> files are stored uncompressed and page-aligned in the APK, and apktool's rebuild loses the alignment</td>
+				<td>Flip <code>extractNativeLibs</code> to <code>true</code> (step 4) + zipalign</td>
+			</tr>
+			<tr>
+				<td><code>INSTALL_FAILED_DUPLICATE_PERMISSION</code></td>
+				<td>Both apps declare <code>secure_comms</code>; Android allows exactly one declarer</td>
+				<td>Delete the <code>&lt;permission&gt;</code> block from MyPlace, keep it in aaservice</td>
+			</tr>
+			<tr>
+				<td><code>INSTALL_FAILED_UPDATE_INCOMPATIBLE</code></td>
+				<td>Re-signed APK over a vendor-signed install</td>
+				<td>Uninstall first (back up app data beforehand — NeoBackup)</td>
+			</tr>
+			<tr>
+				<td><code>DELETE_FAILED_DEVICE_POLICY_MANAGER</code></td>
+				<td>aaservice holds a device-admin receiver</td>
+				<td><code>dpm remove-active-admin com.air.advantage.aaservice2/.receiver.DeviceAdminReceiver</code></td>
+			</tr>
+			<tr>
+				<td>App won't start after in-place APK swap</td>
+				<td>Stale <code>oat/</code> compiled from the original APK</td>
+				<td>Delete the app's <code>oat</code> dir + <code>code_cache</code>, restart</td>
+			</tr>
+			<tr>
+				<td>"Display over other apps" greyed out</td>
+				<td>Restricted in settings on this ROM</td>
+				<td><code>appops set com.air.advantage.myair5 SYSTEM_ALERT_WINDOW allow</code></td>
+			</tr>
+		</tbody>
+	</table>
+
+	<h2><span class="anchor-hash">#</span>verifying the bypass</h2>
+	<p>
+		Post-install, fire each of the previously-forbidden actions from a shell (which holds no
+		signature permission at all) and confirm the framework lets them through:
+	</p>
+	<pre><code>am broadcast -a com.air.advantage.MESSAGE_FROM_CB_SECURE \
+  --es "com.air.advantage.GET_DATA_REQUEST" "verification" \
+  --es "com.air.advantage.MESSAGE_FROM_CB_SECURE" "signature_bypass_confirmed"
+# → result=0 for all four guarded actions; dumpsys shows
+#   com.air.android.secure_comms: granted=true</code></pre>
+
+	<div class="callout warn">
+		<span class="callout-label">security note</span>
+		This removes the signature barrier entirely — any app on the device can now inject
+		control messages. Acceptable on a dedicated, VLAN-isolated control tablet; do not do
+		this on a device you install other things on.
+	</div>
+
+	<h2><span class="anchor-hash">#</span>from patched to rewritten</h2>
+	<p>
+		The lobotomised pair was the bridge: it kept the system fully working while I built the
+		real replacement. Patching smali gets you a working app once; it doesn't get you a
+		maintainable one. The endgame is
+		<a href="https://github.com/retsimx/aaservice">retsimx/aaservice</a> — a clean-room
+		Kotlin reimplementation of the vendor service, reconstructed from the decompiled source
+		with protocol behaviour preserved exactly, plus one new trick the vendor version never
+		had: a <strong>dual transport</strong>. It can drive the control box over the original
+		USB accessory path, <em>or</em> as a WebSocket client to a daemon running somewhere else
+		entirely.
+	</p>
+	<p>That daemon is part 4.</p>
+</Post>

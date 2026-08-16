@@ -1,0 +1,250 @@
+---
+import Post from '../../../layouts/Post.astro';
+import Mermaid from '../../../components/Mermaid.astro';
+---
+
+<Post title="A Pi Zero W in the ceiling" part={5} date="2026-08-16">
+	<p class="tagline">
+		The final move: take the RS-485 link off the wall tablet entirely, and put a $20
+		computer in a sandwich container next to the control box in the ceiling.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>bill of materials</h2>
+	<p>
+		Total spend: one AliExpress order, about the cost of a pizza. Everything else was on
+		hand.
+	</p>
+	<table>
+		<thead>
+			<tr><th>item</th><th>role</th><th>source</th></tr>
+		</thead>
+		<tbody>
+			<tr>
+				<td>Raspberry Pi Zero W</td>
+				<td>bridge compute</td>
+				<td><a href="https://www.raspberrypi.com/products/raspberry-pi-zero-w/">on hand</a></td>
+			</tr>
+			<tr>
+				<td>SanDisk A1 32 GB microSD</td>
+				<td>boot media</td>
+				<td>on hand</td>
+			</tr>
+			<tr>
+				<td>USB-to-RS485 dongle (CH340)</td>
+				<td>bus PHY</td>
+				<td><a href="https://www.aliexpress.com/wholesale?SearchText=USB+to+RS485+converter+module">AliExpress</a></td>
+			</tr>
+			<tr>
+				<td>Buck converter 12/24 V → 5 V 3 A, micro-USB out, waterproof</td>
+				<td>power the Pi from the CB's ~14 V feed</td>
+				<td><a href="https://www.aliexpress.com/wholesale?SearchText=12V+24V+to+5V+3A+buck+converter+micro+usb+waterproof">AliExpress</a></td>
+			</tr>
+			<tr>
+				<td>90° <strong>left</strong> micro-USB OTG → USB-A adapter</td>
+				<td>RS-485 dongle clears the PWR plug</td>
+				<td><a href="https://www.aliexpress.com/wholesale?SearchText=90+degree+micro+usb+otg+adapter+left">AliExpress</a></td>
+			</tr>
+			<tr>
+				<td>5×20 mm ceramic fuse, 1 A slow-blow (T) + inline holder</td>
+				<td>fuse the ~14 V tap before the buck</td>
+				<td><a href="https://www.aliexpress.com/wholesale?SearchText=5x20+ceramic+fuse+slow+blow+assortment">AliExpress</a> · <a href="https://www.aliexpress.com/wholesale?SearchText=5x20+inline+fuse+holder+wire">holder</a></td>
+			</tr>
+			<tr>
+				<td>12-position barrier terminal strip, 0.5–2.5 mm², flame retardant</td>
+				<td>A/B/GND/+14 V distribution</td>
+				<td><a href="https://www.aliexpress.com/wholesale?SearchText=12+position+barrier+screw+terminal+block+flame+retardant">AliExpress</a></td>
+			</tr>
+			<tr>
+				<td>Cat5e patch lead</td>
+				<td>RJ45 tap / pigtails</td>
+				<td>on hand</td>
+			</tr>
+			<tr>
+				<td>Sealed plastic food container, medium</td>
+				<td>enclosure (lid notched for cables)</td>
+				<td>the kitchen</td>
+			</tr>
+		</tbody>
+	</table>
+
+	<h2><span class="anchor-hash">#</span>the tap</h2>
+	<p>
+		The CB-to-tablet cable is RJ45 carrying RS-485 <em>and</em> ~14 V power. Identify pins
+		by number, not colour (T568A vs T568B swap the pairs):
+	</p>
+	<table>
+		<thead>
+			<tr><th>pin</th><th>signal</th></tr>
+		</thead>
+		<tbody>
+			<tr><td>1</td><td>RS-485 B(+)</td></tr>
+			<tr><td>2</td><td>RS-485 A(−)</td></tr>
+			<tr><td>4, 6</td><td>GND</td></tr>
+			<tr><td>5</td><td>~14 V DC (measure before connecting!)</td></tr>
+		</tbody>
+	</table>
+
+	<Mermaid>{`flowchart LR
+		subgraph CB["Control Box RJ45"]
+			P12["pins 1–2<br/>RS-485 B+/A−"]
+			P46["pins 4/6 — GND"]
+			P5["pin 5 — ~14 V DC"]
+		end
+		P12 --> TS["12-way terminal strip"]
+		P46 --> TS
+		P5 --> FUSE["1 A T fuse"] --> BUCK["buck → 5 V micro-USB"] --> PWR["Pi Zero W PWR"]
+		TS -->|"A/B/GND"| RS["USB-RS485 dongle"] --> OTG["90° left OTG"] --> USBP["Pi Zero W USB (OTG)"]
+		TS -->|"GND"| BUCK`}</Mermaid>
+
+	<div class="callout warn">
+		<span class="callout-label">rules</span>
+		Fuse goes on the ~14 V line <em>before</em> the buck. Common ground everywhere. And the
+		cardinal rule: never two tablet-side talkers on the same RS-485 segment — rollback is
+		"disconnect the tap, reconnect the tablet cable".
+	</div>
+
+	<figure>
+		<img src="/photos/aircon/pi-assembly-1.jpg" alt="Pi Zero W bridge assembly on the bench" loading="lazy" />
+		<figcaption>Bench assembly — Pi Zero W, buck, fuse holder, terminal strip, RS-485 dongle.</figcaption>
+	</figure>
+	<div class="photo-grid">
+		<figure>
+			<img src="/photos/aircon/pi-assembly-2.jpg" alt="Bridge assembly, detail" loading="lazy" />
+		</figure>
+		<figure>
+			<img src="/photos/aircon/pi-assembly-3.jpg" alt="Bridge assembly, wiring detail" loading="lazy" />
+		</figure>
+		<figure>
+			<img src="/photos/aircon/pi-assembly-4.jpg" alt="Bridge assembly, terminal strip" loading="lazy" />
+		</figure>
+		<figure>
+			<img src="/photos/aircon/enclosure-1.jpg" alt="Assembly migrated into the enclosure" loading="lazy" />
+		</figure>
+	</div>
+	<figure>
+		<img src="/photos/aircon/enclosure-2.jpg" alt="Enclosure with cables entering via lid notch" loading="lazy" />
+		<figcaption>Migrated into the food container — cables enter through a notch in the lid.</figcaption>
+	</figure>
+
+	<h2><span class="anchor-hash">#</span>the software appliance</h2>
+	<p>
+		The Pi runs <strong>Alpine Linux</strong> (32-bit ARMv6, OpenRC) — small, musl-based,
+		and happy on the Zero W. The daemon is cross-compiled as a static musl binary with
+		<a href="https://github.com/cross-rs/cross">cross</a>:
+	</p>
+	<pre><code>cargo install cross --git https://github.com/cross-rs/cross
+./scripts/build-pi-zero.sh   # → arm-unknown-linux-musleabihf/release/cb-daemon
+scp target/arm-unknown-linux-musleabihf/release/cb-daemon \
+    root@&lt;pi&gt;:/usr/local/bin/cb-daemon</code></pre>
+
+	<p>Config (<code>/etc/cb-daemon/config.toml</code>):</p>
+	<pre><code>backend   = "tty"
+device    = "/dev/ttyUSB0"
+bind      = "0.0.0.0:2026"
+tty_baud  = 57600
+unit_id_hint = "xxxxx"     # your CB's unit id
+log_level = "debug"</code></pre>
+
+	<p>
+		OpenRC runs it under <code>supervise-daemon</code> (unlimited respawn, waits for
+		<code>/dev/ttyUSB0</code> at boot). One Alpine gotcha worth publishing: OpenRC 0.63's
+		supervise-daemon captures <em>no</em> child output unless you set
+		<code>output_log</code>/<code>error_log</code> — without them, logs vanish silently.
+	</p>
+
+	<h3>RAM-only logging, and the ENOSPC deadlock</h3>
+	<p>
+		<code>/var/log</code> is a 128 MiB tmpfs — the SD card does no log writes. Logrotate
+		caps usage with <code>copytruncate</code>… and this produced the best failure of the
+		project. At debug level the daemon can emit ~70 KB/s of frame logs; with logrotate on
+		a 15-minute timer, the live log could outgrow the <em>free space remaining</em> between
+		runs. <code>copytruncate</code> then needs to copy a file that no longer fits, every
+		rotation fails ENOSPC, and since nothing can ever be freed, the tmpfs stays 100% full
+		forever — a permanent deadlock that also kills the daemon's logs. The fix: run
+		logrotate every minute (<code>/etc/periodic/1min</code>), bounding worst-case growth to
+		~9 MB, and keep exactly one periodic copy (two timers colliding on the state lock exit
+		with ALERTs). Boring problem, satisfying fix.
+	</p>
+	<p>
+		Also: <code>gpu_mem=32</code> in <code>/boot/config.txt</code> reclaims ~32 MB on a
+		headless node (re-apply after bootloader upgrades — Alpine preserves it for normal
+		updates but not those).
+	</p>
+
+	<h2><span class="anchor-hash">#</span>installation day — 2026-08-12</h2>
+	<div class="photo-grid">
+		<figure>
+			<img src="/photos/aircon/enclosure-3.jpg" alt="Enclosure ready for installation" loading="lazy" />
+			<figcaption>Sealed up, ready to go up.</figcaption>
+		</figure>
+		<figure>
+			<img src="/photos/aircon/ceiling-1.jpg" alt="Installation at the control box in the ceiling" loading="lazy" />
+			<figcaption>In the ceiling, at the control box.</figcaption>
+		</figure>
+		<figure>
+			<img src="/photos/aircon/ceiling-2.jpg" alt="Bridge connected to the control box" loading="lazy" />
+			<figcaption>Tapped into the CB: RS-485 pair + ~14 V feed.</figcaption>
+		</figure>
+		<figure>
+			<img src="/photos/aircon/ceiling-3.jpg" alt="Installed bridge, final position" loading="lazy" />
+			<figcaption>Final resting place. Not hermetic — it doesn't need to be.</figcaption>
+		</figure>
+	</div>
+
+	<h2><span class="anchor-hash">#</span>cutover</h2>
+	<p>
+		Bus verification first — with nothing talking, the CB's endless <code>Ping</code>
+		heartbeat confirms wiring, then a one-shot probe confirms negotiation:
+	</p>
+	<pre><code>stty -F /dev/ttyUSB0 57600 raw -echo
+cat /dev/ttyUSB0                        # &lt;U&gt;Ping&lt;/U=db&gt; &lt;U&gt;Ping&lt;/U=db&gt; …
+echo -n "&lt;U&gt;getSystemData&lt;/U=15&gt;" &gt; /dev/ttyUSB0
+# → &lt;U&gt;CAN2 in use&lt;/U=95&gt;</code></pre>
+
+	<p>Then the handover — tablet daemon off, tablet service repointed at the Pi:</p>
+	<pre><code># on the tablet: stop the local daemon, disable its Magisk module
+su -c '/data/adb/cb-daemon/control.sh stop'
+su -c 'touch /data/adb/modules/cb-daemon/disable'
+
+# repoint aaservice2 at the Pi
+su -c 'am start-foreground-service \
+  -n com.air.advantage.aaservice2/.service.UartForegroundService \
+  -a com.air.advantage.TRANSPORT_MODE_CHANGED \
+  --es daemon_ws_url "ws://&lt;pi&gt;:2026/v1/mailbox-stream" \
+  --es transport_mode ws'</code></pre>
+
+	<p>
+		One app-side gotcha: Android's network security policy blocks cleartext
+		<code>ws://</code> to non-loopback hosts, so the rebuilt aaservice ships a
+		<code>network_security_config</code> with <code>cleartextTrafficPermitted="true"</code>
+		(fine here — the link is an isolated IoT VLAN, and the protocol has no secrets worth
+		encrypting). The tablet's USB cable stays plugged into the CB — it powers the tablet
+		and keeps rollback to the stock path a cable-swap away.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>verification</h2>
+	<pre><code># on the Pi
+rc-service cb-daemon status        # started
+tail /var/log/cb-daemon.log        # "negotiated detail=CAN2 in use"
+netstat -tn | grep 2026            # ESTABLISHED from the tablet
+
+# on the tablet — wall panel works end-to-end through the Pi,
+# and the vendor :2025 HTTP API (home automation) never noticed</code></pre>
+
+	<h2><span class="anchor-hash">#</span>where it stands</h2>
+	<ul>
+		<li>The Pi is the sole talker on the CB bus; the tablet is a pure WebSocket client</li>
+		<li>The vendor UI is 100% functional — zones, temps, modes, schedules</li>
+		<li>The tablet-local daemon stack has been fully removed (rollback = reinstall module + point the WS URL at loopback)</li>
+		<li>
+			Next up: moving the tablet-side logic (schedules, myauto) off Android entirely, and
+			a northbound API for the rest of the house — the daemon's broker protocol is ready
+			for it
+		</li>
+	</ul>
+
+	<div class="status-line">
+		<span><span class="dot"></span>in production since 2026-08-12</span>
+		<span><span class="dot"></span>zero comfort incidents</span>
+	</div>
+</Post>
