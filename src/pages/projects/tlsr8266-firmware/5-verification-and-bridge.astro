@@ -1,0 +1,142 @@
+---
+import Post from '../../../layouts/Post.astro';
+import Mermaid from '../../../components/Mermaid.astro';
+---
+
+<Post title="Verification, CI, and the smart mesh bridge" part={5} date="2026-08-16" series="tlsr8266-firmware">
+	<p class="tagline">
+		Testing embedded firmware without physical hardware: mocking microcontroller MMIO on x86 with
+		the <code>mry</code> crate, branch-coverage CI, and integrating our BLE mesh with home automation via a 44-byte UART gateway.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the testing challenge</h2>
+	<p>
+		Testing firmware on real microcontrollers is slow, difficult to automate, and prone to false
+		positives. Flashing hardware over SWS or BLE takes time, and asserting state inside MCU registers
+		requires physical probe setups.
+	</p>
+	<p>
+		To make development rapid and testable, I designed the Rust codebase so that <strong>every driver,
+		state machine, and protocol parser can be tested directly on an x86 Linux machine</strong>.
+	</p>
+
+	<Mermaid>{`flowchart LR
+		TEST["Host Unit Test<br/>(i686-unknown-linux-gnu)"] -->|"Configures mocks via mry"| MRY["mry Mocking Engine<br/>(Function-level interception)"]
+		MRY <-->|"Intercepts read/write registers"| DRV["Rust Driver / Stack Under Test<br/>(register.rs)"]
+		DRV -->|"Asserts expected output"| TEST`}</Mermaid>
+
+	<h2><span class="anchor-hash">#</span>host MMIO register mocking with <code>mry</code></h2>
+	<p>
+		On real hardware, all peripherals are accessed via volatile pointer reads/writes at base
+		address <code>0x800000</code>. To allow unit testing on x86 without hardware attached, I annotated
+		every register accessor function in <code>rust/src/sdk/mcu/register.rs</code> with the <code>mry::mry</code> macro:
+	</p>
+
+	<pre><code>{`// In rust/src/sdk/mcu/register.rs:
+pub const REG_BASE_ADDR: u32 = 0x800000;
+
+#[coverage(off)]
+#[cfg_attr(test, mry::mry)]
+pub fn write_reg8(addr: u32, v: u8) {
+    unsafe { core::ptr::write_volatile((addr | REG_BASE_ADDR) as *mut u8, v) }
+}
+
+#[coverage(off)]
+#[cfg_attr(test, mry::mry)]
+pub fn read_reg8(addr: u32) -> u8 {
+    unsafe { core::ptr::read_volatile((addr | REG_BASE_ADDR) as *mut u8) }
+}`}</code></pre>
+
+	<p>
+		Under test builds (<code>#[cfg(test)]</code>), <code>mry</code> generates mock handles for each register function.
+		Unit tests configure return values and assert that drivers interact with hardware registers correctly:
+	</p>
+
+	<pre><code>{`// In test suites: simulating hardware register responses
+#[test]
+fn test_rf_channel_configuration() {
+    mock_read_reg8(0x40d).returns(0x02);
+    mock_write_reg8(0x40d, 0x05).returns(());
+
+    // Test driver logic against mocked register interactions
+    assert_eq!(read_reg_rf_channel(), 0x02);
+}`}</code></pre>
+
+	<p>
+		Because the TLSR8266 is a 32-bit architecture, tests are cross-compiled against <code>i686-unknown-linux-gnu</code>.
+		This ensures identical pointer widths and struct layout rules, catching misaligned data access and
+		endianness issues before code ever touches silicon.
+	</p>
+	<p>
+		Running <code>./rust/run_tests.sh</code> executes <strong>975 unit tests</strong> covering BLE advertisement parsing,
+		AES-CCM encryption, pairing transitions, and PWM calculations in under two seconds.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>continuous integration & quality gates</h2>
+	<p>
+		In <code>.github/workflows/ci.yml</code>, the GitHub Actions pipeline enforces code quality on every pull request:
+	</p>
+	<ul>
+		<li><strong>Formatting & Linting:</strong> Strict <code>cargo clippy --all-targets</code> and <code>rustfmt</code> verification.</li>
+		<li><strong>Host Test Coverage:</strong> Live test reporting with branch-level metrics via <code>cargo-llvm-cov</code>.</li>
+		<li><strong>Native LLVM Build:</strong> Builds the forked <code>llc</code>, <code>llvm-link</code>, and <code>opt</code> from source and verifies full firmware binary generation with zero warnings.</li>
+	</ul>
+
+	<h2><span class="anchor-hash">#</span>the smart mesh bridge (ditching the vendor brick)</h2>
+	<p>
+		The stock vendor controller was a cheap USB "Wi-Fi/BLE gateway brick". It dropped packets,
+		lagged during mesh floods, and depended on vendor cloud endpoints.
+	</p>
+	<p>
+		I replaced the vendor brick entirely with an <strong>E104-BT05-TB development board</strong> flashed
+		with the custom Rust firmware, plugged directly into the home server as a dedicated serial bridge.
+	</p>
+
+	<Mermaid>{`flowchart LR
+		HA["Home Assistant / MQTT"] <-->|"JSON State"| SMART["Smart Manager Daemon<br/>(Rust service)"]
+		SMART <-->|"115200 Baud 8N1<br/>44-byte Packets (CRC16)"| BRIDGE["E104-BT05-TB<br/>(Gateway Node)"]
+		BRIDGE <-->|"2.4 GHz BLE GFSK<br/>AES-CCM Mesh Flood"| MESH["Mesh Light Nodes<br/>(TYBT1 Bulbs)"]`}</Mermaid>
+
+	<h3>The 44-Byte Binary UART Protocol</h3>
+	<p>
+		The bridge communicates with the host <strong>Smart Manager Daemon</strong> (<code>smartmanager</code>)
+		over serial at 115200 baud using structured 44-byte binary packets:
+	</p>
+
+	<table>
+		<thead>
+			<tr><th>Offset</th><th>Size</th><th>Field</th><th>Description</th></tr>
+		</thead>
+		<tbody>
+			<tr><td><code>0</code></td><td>1</td><td>Sequence Counter</td><td>Incrementing transaction ID for matching acknowledgments</td></tr>
+			<tr><td><code>1</code></td><td>1</td><td>ACK Flag</td><td><code>0x00</code> for normal command; <code>0xFF</code> for acknowledgment</td></tr>
+			<tr><td><code>2</code></td><td>1</td><td>Command Type</td><td><code>0x02</code> (Light Ctrl), <code>0x03</code> (Status Req), <code>0x07</code> (Node Status)</td></tr>
+			<tr><td><code>3..17</code></td><td>15</td><td>Payload Data</td><td>Target Node ID, brightness (<code>0x700-0x7FFF</code>), temperature, transition time</td></tr>
+			<tr><td><code>18</code></td><td>1</td><td>Reliability Flag</td><td><code>0x05</code> for retry with ACK confirmation; <code>0x00</code> for best-effort flood</td></tr>
+			<tr><td><code>19..41</code></td><td>23</td><td>Zero Padding</td><td>Reserved buffer padding</td></tr>
+			<tr><td><code>42..43</code></td><td>2</td><td>CRC16-ANSI</td><td>Little-endian CRC16 checksum calculated over bytes 0–41</td></tr>
+		</tbody>
+	</table>
+
+	<p>
+		Every few seconds during sunrise and sunset, the daemon calculates the next circadian target
+		and sends a 44-byte command to the bridge. The mesh nodes receive the target and smoothly tween
+		their PWM compare levels across 32,767 internal steps. No strobing, no step ladder, and no cloud dependency.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>retrospective & conclusions</h2>
+	<p>
+		What started as an annoyance with aggressive, non-tweening smart lights and a flaky gateway
+		brick evolved into a solid, maintainable embedded stack:
+	</p>
+	<ul>
+		<li><strong>Zero Proprietary Blobs:</strong> Liberation from closed vendor SDKs and cloud dependencies.</li>
+		<li><strong>Native Toolchain:</strong> Upstream-tracked LLVM backend enabling standard Rust on obscure TC32 silicon.</li>
+		<li><strong>Smooth Lighting:</strong> Sub-10ms response times, 32,767 resolution levels, and gradual circadian transitions.</li>
+		<li><strong>Reliability:</strong> High branch coverage and host-side register simulation ensure predictable daily operation.</li>
+	</ul>
+	<p>
+		Every light in the house now runs code I wrote, compiled with a toolchain I maintain, speaking
+		a protocol I understand end-to-end.
+	</p>
+</Post>

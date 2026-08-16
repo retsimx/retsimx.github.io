@@ -1,0 +1,191 @@
+---
+import Post from '../../../layouts/Post.astro';
+import Mermaid from '../../../components/Mermaid.astro';
+---
+
+<Post title="The silicon and the blob" part={1} date="2026-08-16" series="tlsr8266-firmware">
+	<p class="tagline">
+		Literally all of this exists because I wanted my lights to smoothly tween between colour
+		temperatures at dawn and dusk. Inside consumer Tuya bulbs lies an obscure 32-bit RISC SoC — the
+		Telink TLSR8266 — wrapped in a closed-source vendor blob that snapped abruptly between states.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the origin: the dawn/dusk problem</h2>
+	<p>
+		The premise was simple: I wanted the lighting in my house to follow a natural circadian curve.
+		At dawn and dusk, the downlights should transition between cool daylight (6000K) and warm amber (2000K).
+	</p>
+	<p>
+		I have a central home controller that manages this by calculating target values and sending updates
+		every few seconds. On the stock Tuya hardware, the result was jarring:
+	</p>
+	<ul>
+		<li>
+			<strong>The Vendor Bridge:</strong> Control was routed through a cheap USB "Wi-Fi/BLE gateway brick"
+			that frequently dropped packets and required cloud provisioning.
+		</li>
+		<li>
+			<strong>Crude Resolution:</strong> The vendor firmware accepted only 100 discrete brightness increments and 255 colour increments with zero interpolation.
+		</li>
+		<li>
+			<strong>Zero On-Device Tweening:</strong> The OEM firmware had no interpolation between states. When the
+			controller sent a sub-step, the light didn't fade — it snapped to the new value instantly. Over a thirty-minute
+			sunset fade, the downlights stepped and strobed visibly enough that other people in the house complained.
+		</li>
+		<li>
+			<strong>Severe PWM Flicker:</strong> When dimmed, the OEM firmware's PWM counter ran at ~600 Hz.
+			According to <a href="https://bio-licht.org/02_resources/info_ieee-pem_2014-09_led-flickering.pdf">IEEE PAR 1789</a>,
+			low-frequency modulation under 1,250 Hz causes stroboscopic phantom arrays during eye movement, inducing eyestrain
+			and headaches.
+		</li>
+	</ul>
+	<p>
+		To get smooth, flicker-free lighting, the bulbs needed to perform independent on-device easing
+		with high-frequency PWM (>3 kHz): receiving intermediate targets from the controller and smoothly tweening from wherever their
+		current PWM duty cycle was to the new target. To do that, I had to replace the firmware completely.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the hardware target</h2>
+	<p>
+		If you crack open a typical Tuya BLE smart light bulb or downlight, you will find a small
+		daughterboard soldered onto the power supply: the <strong>TYBT1</strong> module.
+		At the heart of that module sits the <strong>Telink TLSR8266F512</strong> — an ultra-low-cost
+		System-on-Chip integrating a 32-bit proprietary microcontroller, a 2.4 GHz multi-protocol radio,
+		512 KB of on-chip SPI flash, and 16 KB of SRAM.
+	</p>
+	<p>
+		For development and bridging, the same chip is available on the <strong>E104-BT05-TB</strong> dev
+		board, which exposes all pins, an onboard crystal, and a CP2102 USB-to-UART bridge.
+	</p>
+
+	<div class="callout">
+		<span class="callout-label">TLSR8266F512 SPECS</span>
+		<ul>
+			<li><strong>Core:</strong> Telink TC32 (32-bit RISC, single-issue) @ 32 MHz (192 MHz PLL ÷ 6)</li>
+			<li><strong>Memory:</strong> 16 KB SRAM, 512 KB internal SPI NOR Flash</li>
+			<li><strong>Radio:</strong> 2.4 GHz GFSK transceiver (BLE 1 Mbps & proprietary mesh mode)</li>
+			<li><strong>Crypto:</strong> Hardware AES-128 encrypt/decrypt engine</li>
+			<li><strong>Peripherals:</strong> 6-channel DMA, 6 PWM channels, hardware UART, Timers + Watchdog, SAR ADC</li>
+		</ul>
+	</div>
+
+	<h2><span class="anchor-hash">#</span>the vendor wall</h2>
+	<p>
+		Telink's official SDK for the TLSR8266 is typical of budget IoT chip vendors: rather than
+		shipping source code for the Bluetooth Low Energy stack and mesh networking, Telink ships a
+		precompiled static archive: <code>libble_app_8266.a</code>.
+	</p>
+	<p>
+		This archive contained compiled object files — chief among them <code>light_ll.o</code> and <code>shared_mem.o</code> — which
+		implemented the lower link layer, RF interrupt dispatchers, GATT attribute server, pairing state machine,
+		and Tuya cloud provisioning hooks. Even worse:
+	</p>
+	<ul>
+		<li>
+			<strong>Proprietary Toolchain:</strong> Telink provided a heavily patched fork of GCC 4.5.1
+			targeting their custom "TC32" architecture.
+		</li>
+		<li>
+			<strong>Global Mutable Sprawl:</strong> The SDK relied on dozens of unsynchronized global
+			variables scattered across arbitrary SRAM addresses without memory protection.
+		</li>
+		<li>
+			<strong>Cloud & App Lock-in:</strong> The default firmware enforced Tuya's proprietary pairing
+			handshake and expected cloud tokens to provision mesh keys.
+		</li>
+	</ul>
+	<p>
+		If I wanted local control, reproducible builds, flicker-free PWM, and on-device tweening in Rust,
+		linking against <code>libble_app_8266.a</code> was a dead end. I had to take the binary blob apart.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>decompiling TC32 with Ghidra</h2>
+	<p>
+		TC32 is an unusual architecture: instruction encoding resembles ARM Thumb-16 with custom
+		instruction mnemonics (such as <code>tadd</code>, <code>tj</code>, <code>tloadr</code>, <code>tstorer</code>),
+		non-standard branch offsets, and custom interrupt return semantics.
+	</p>
+	<p>
+		Building on <a href="https://rbaron.net/blog/2021/07/06/Reverse-engineering-the-M6-smart-fitness-band.html">Raphael Baron's reverse-engineering work</a> on
+		the TLSR8266-based M6 fitness tracker and using <a href="https://github.com/trust1995/Ghidra_TELink_TC32">trust1995's TC32 Ghidra processor plugin</a>,
+		I loaded <code>libble_app_8266.a</code> into Ghidra to map every function, interrupt handler, and register
+		interaction.
+	</p>
+
+	<Mermaid>{`flowchart LR
+		BLOB["libble_app_8266.a<br/>(proprietary .o files)"] --> GHIDRA["Ghidra + TC32 Module<br/>(trust1995)"]
+		GHIDRA --> REGS["Hardware MMIO Map<br/>(0x800000 base)"]
+		GHIDRA --> PROTO["Mesh Wire Protocol<br/>(AES-CCM Frames)"]
+		GHIDRA --> IRQ["Link Layer State Machine<br/>(irq_st_bridge / DMA)"]`}</Mermaid>
+
+	<h2><span class="anchor-hash">#</span>the memory map and hardware registers</h2>
+	<p>
+		All TLSR8266 peripherals are memory-mapped starting at base address <code>0x800000</code>.
+		Accessing a register is a direct 8-bit, 16-bit, or 32-bit load/store at an offset from this base.
+		The layout is straightforward: GPIO registers live around <code>0x580</code> where the PWM channels are
+		multiplexed onto output pins, the hardware AES engine sits at <code>0x540</code> where keys and data blocks
+		are loaded, and the RF modem registers occupy <code>0x400–0x4FF</code>.
+	</p>
+
+	<table>
+		<thead>
+			<tr><th>Offset Range</th><th>Subsystem</th><th>Description</th></tr>
+		</thead>
+		<tbody>
+			<tr><td><code>0x060–0x07F</code></td><td>Reset / Clock</td><td>Clock gating, PLL divider, power modes</td></tr>
+			<tr><td><code>0x090–0x09F</code></td><td>UART</td><td>Serial configuration, baud divider, buffer status</td></tr>
+			<tr><td><code>0x400–0x4FF</code></td><td>RF Modem</td><td>Baseband config, channel frequency, AGC, CRC</td></tr>
+			<tr><td><code>0x500–0x52F</code></td><td>DMA / MAC</td><td>6-channel DMA config, RX/TX FIFO buffers</td></tr>
+			<tr><td><code>0x540–0x55F</code></td><td>AES Engine</td><td>128-bit hardware AES key, data input, and trigger</td></tr>
+			<tr><td><code>0x580–0x5CF</code></td><td>GPIO</td><td>Ports PA–PF directions, inputs, outputs, pull-ups</td></tr>
+			<tr><td><code>0x620–0x63F</code></td><td>Timers</td><td>Timers 0/1/2 mode, tick count, watchdog timer</td></tr>
+			<tr><td><code>0x640–0x64F</code></td><td>IRQ Controller</td><td>Interrupt mask, interrupt status, and clear</td></tr>
+			<tr><td><code>0x740–0x74F</code></td><td>System Tick</td><td>Free-running 32-bit microsecond counter</td></tr>
+			<tr><td><code>0x780–0x7BF</code></td><td>PWM Engine</td><td>6 PWM channel cycle/pulse widths (LED dimming)</td></tr>
+			<tr><td><code>0xF00–0xF2F</code></td><td>RF Control</td><td>Radio state machine, scheduling, RF IRQ bridge</td></tr>
+		</tbody>
+	</table>
+
+	<h2><span class="anchor-hash">#</span>the mesh protocol and packet architecture</h2>
+	<p>
+		Decompiling <code>light_ll.o</code> revealed the wire protocol used for inter-bulb mesh
+		communication. Over the air, the system operates on 2.4 GHz GFSK at 1 Mbps with encrypted
+		variable-length frames (up to 37 bytes payload). In serial bridge setups, communications are wrapped
+		in structured <strong>44-byte binary UART frames</strong> with <strong>CRC16-ANSI</strong> integrity checks.
+	</p>
+
+	<Mermaid>{`sequenceDiagram
+		autonumber
+		actor Controller as Smart Manager Host
+		participant NodeA as Mesh Bridge Node (E104)
+		participant NodeB as Mesh Light Node (TYBT1)
+
+		Controller->>NodeA: 44-byte UART Frame (Opcode 0x02, CRC16)
+		Note over NodeA: Decrypt with Session Key / LTK
+		NodeA->>NodeB: 2.4 GHz RF Mesh Flood (Opcode 0x30 / SET_LIGHT)
+		Note over NodeB: Parse Target ID & Tween PWM
+		NodeB-->>NodeA: RF Mesh Status Broadcast (Opcode 0x1B)
+		NodeA-->>Controller: 44-byte UART Status Notification (Opcode 0x07)`}</Mermaid>
+
+	<h3>GATT Characteristics</h3>
+	<p>
+		When operating in standard BLE mode, the device exposes three 128-bit GATT characteristics
+		under custom UUIDs:
+	</p>
+	<ul>
+		<li><strong>Pair Characteristic (<code>...1914</code>):</strong> Used for challenge-response authentication, session key exchange, and provisioning the mesh name, password, and Long-Term Key (LTK).</li>
+		<li><strong>Command Characteristic (<code>...1912</code>):</strong> Encrypted transport for runtime mesh operations (turning lights on/off, dimming, setting color temperature).</li>
+		<li><strong>Notify Characteristic (<code>...1911</code>):</strong> Device telemetry and node status broadcasts.</li>
+	</ul>
+
+	<h2><span class="anchor-hash">#</span>what came next</h2>
+	<p>
+		With the memory map, interrupt architecture, and protocol structures mapped out in Ghidra, I
+		had a clear blueprint. But before I could run a single line of custom code on a real bulb, I
+		needed a way to physically flash the silicon without bricking it.
+	</p>
+	<p>
+		Next: building a hardware programmer using a Raspberry Pi Pico and overclocked PIO
+		state machines.
+	</p>
+</Post>

@@ -1,0 +1,186 @@
+---
+import Post from '../../../layouts/Post.astro';
+import Mermaid from '../../../components/Mermaid.astro';
+---
+
+<Post title="The single-wire programmer" part={2} date="2026-08-16" series="tlsr8266-firmware">
+	<p class="tagline">
+		The TLSR8266 has no standard SWD or JTAG debug port. Flashing it requires speaking
+		Telink's proprietary Single Wire Serial protocol — which I solved by overclocking a
+		Raspberry Pi Pico to 270 MHz with custom PIO assembly state machines.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the single-wire interface (SWS)</h2>
+	<p>
+		To keep pin counts and packaging costs minimal on budget IoT chips, Telink designed a
+		proprietary half-duplex single-wire debug interface called <strong>SWS (Single Wire Serial)</strong>.
+		On the TYBT1 module, this line is exposed as a solder pad labeled <code>SWS</code> (tied to MCU pin 15).
+	</p>
+	<p>
+		The SWS protocol was first reverse-engineered by <a href="https://rbaron.net/blog/2021/07/06/Reverse-engineering-the-M6-smart-fitness-band.html">Raphael Baron</a> (<a href="https://github.com/rbaron/m6-reveng">rbaron/m6-reveng</a>) on
+		the M6 fitness tracker. It allows a host debugger to read and write arbitrary SRAM addresses, control
+		registers, halt the CPU, and command the on-chip SPI flash controller. However, the timing is strict:
+	</p>
+	<ul>
+		<li>
+			<strong>Pulse-Width Encoding:</strong> Logic '1' and '0' bits are encoded by the ratio of low
+			time to high time within a single bit period.
+		</li>
+		<li>
+			<strong>Turnaround Timing:</strong> The bus transitions from host-driving to chip-driving in
+			sub-microsecond intervals.
+		</li>
+		<li>
+			<strong>Frequency Variance:</strong> The internal RC oscillator on the TLSR8266 varies across
+			batches, meaning the receive baud rate varies between ~122 MHz and ~130 MHz equivalent sample clocks.
+		</li>
+	</ul>
+
+	<Mermaid>{`flowchart LR
+		PC["PC Host<br/>Python client.py"] <-->|"USB Serial<br/>(Raw Paste REPL)"| PICO["Raspberry Pi Pico (RP2040)<br/>Overclocked @ 270 MHz"]
+		PICO <-->|"GP17 (SWS TX) / GP15 (SWS RX)<br/>PIO State Machines"| TARGET["TLSR8266 (TYBT1 / E104)<br/>SRAM & SPI Flash Engine"]
+		PICO -->|"GP14 (RST)"| TARGET`}</Mermaid>
+
+	<h2><span class="anchor-hash">#</span>why the RP2040 PIO was the right tool</h2>
+	<p>
+		Standard FTDI bit-banging adapters or microcontrollers running software C loops struggle with SWS:
+		interrupt latency and jitter cause dropped bits and corrupted flash sectors.
+	</p>
+	<p>
+		The Raspberry Pi Pico's RP2040 microcontroller was suited for this problem.
+		Its <strong>Programmable I/O (PIO)</strong> state machines run deterministic assembly
+		instructions completely independent of the CPU cores.
+	</p>
+	<p>
+		By overclocking the RP2040 from its default 125 MHz to <strong>270 MHz</strong>, I could divide
+		clock cycles down to sample incoming bits and pulse outgoing waveforms with nanosecond accuracy.
+	</p>
+
+	<h3>The PIO Assembly State Machines</h3>
+	<p>
+		In <code>utilities/picow_swire/remote.py</code>, I implemented two separate PIO state machines:
+		one for transmitter timing on GP17 (<code>tx_pio</code>) and one for receiver sampling on GP15 (<code>rx_pio</code>).
+	</p>
+
+	<pre><code>{`# MicroPython PIO Assembly: Transmitting SWS frames at 270 MHz
+@asm_pio(out_shiftdir=rp2.PIO.SHIFT_LEFT, set_init=PIO.OUT_HIGH)
+def tx_pio():
+    pull(block)
+    out(x, 22)               # Skip unused bits
+    out(x, 1)                # Check short low level command
+    jmp(not_x, "finish")
+
+    set(y, 8)
+    label("nextbit")
+    out(x, 1)
+    jmp(not_x, "zero")
+
+    # Send logic '1' (short low pulse, long high)
+    set(pins, 0) [19]
+    set(pins, 1) [1]
+    jmp(y_dec, "nextbit")
+    jmp("finish")
+
+    # Send logic '0' (long low pulse, short high)
+    label("zero")
+    set(pins, 0) [4]
+    set(pins, 1) [16]
+    jmp(y_dec, "nextbit")
+
+    label("finish")
+    set(pins, 0) [4]
+    set(pins, 1)`}</code></pre>
+
+	<p>
+		For the receiver, sample delays match the specific device crystal:
+	</p>
+
+	<pre><code>{`# MicroPython PIO Assembly: Receiving SWS responses
+@asm_pio(autopush=True, push_thresh=8, in_shiftdir=rp2.PIO.SHIFT_LEFT)
+def rx_pio():
+    wait(0, pin, 0)          # Wait for falling edge
+    wait(1, pin, 0)          # Wait for start bit
+    wait(0, pin, 0) [30]
+    set(x, 7)
+    label("nextbit")
+    in_(pins, 1)    [31]     # Sample at center of bit window
+    nop()           [30]
+    jmp(x_dec, "nextbit")`}</code></pre>
+
+	<h2><span class="anchor-hash">#</span>the raw paste REPL bridge</h2>
+	<p>
+		Rather than writing a bespoke binary USB protocol, the host Python script (<code>client.py</code>)
+		interacts with the Pico via MicroPython's <strong>Raw Paste REPL</strong> over standard USB serial.
+		This allowed the host to directly evaluate Python expressions on the Pico with zero serialization boilerplate:
+	</p>
+
+	<pre><code>{`def read_flash(addr, length):
+    result, exc = send(f"print(repr(read_flash({addr}, {length})))")
+    assert not len(exc)
+    return list(eval(result.decode().strip()))
+
+def write_flash(addr, data):
+    result, exc = send(f"print(repr(write_flash({addr}, {repr(list(data))})))")
+    assert not len(exc)`}</code></pre>
+
+	<p>
+		With this programmer running, I dumped the 512,000-byte factory firmware backup (<code>0x7D000</code> / 500 KB)
+		from the test bulbs. If experimental builds locked up or crashed, I could restore the chip to a known good
+		state in under 15 seconds.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>gotcha: the crystal frequency trap</h2>
+	<div class="callout warn">
+		<span class="callout-label">12 MHZ VS 16 MHZ CRYSTAL MISMATCH (COMMIT b4392ad)</span>
+		<p>
+			Early in testing, flashing firmware built for the E104-BT05-TB development board onto a production
+			TYBT1 bulb resulted in silence: no BLE advertisements, no UART output, dead silicon.
+		</p>
+		<p>
+			The cause: the development board used a <strong>16 MHz crystal</strong>, while production
+			TYBT1 bulbs were populated with a <strong>12 MHz crystal</strong>. Because the system clock and PLL
+			multipliers depend on this base frequency, an incorrect crystal target shifts all UART baud rates and RF
+			channels off-frequency.
+		</p>
+		<p>
+			I introduced a compile-time Cargo feature flag (<code>--features xtal-16mhz</code>) that encodes the crystal
+			type into bit 31 of the firmware version header (<code>XTAL_16MHZ &lt;&lt; 31 | BUILD_VERSION</code>).
+			The flashing tools (<code>flash_fw.py</code> / <code>flash_fw_uart.py</code>) inspect this header before flashing
+			and refuse incompatible images.
+		</p>
+	</div>
+
+	<h2><span class="anchor-hash">#</span>escaping physical wires: BLE & UART OTA</h2>
+	<p>
+		Soldering SWS wires onto surface-mount pads is fine for the workbench, but you can't solder
+		wires onto twenty light bulbs mounted in the ceiling. Physical flashing was only needed for the
+		initial bootstrapping.
+	</p>
+	<p>
+		Once the custom firmware booted, it exposed two Over-The-Air (OTA) update paths:
+	</p>
+
+	<div class="callout">
+		<span class="callout-label">OTA UPDATE CHANNELS</span>
+		<ul>
+			<li>
+				<strong>BLE OTA (<code>flash_fw.py</code>):</strong> Standard Bluetooth Low Energy OTA
+				transfer via characteristic <code>0x1912</code>, transferring 16-byte chunked blocks with
+				per-packet sequence numbers and CRC verification. Compatible with both OEM firmware and custom Rust firmware.
+			</li>
+			<li>
+				<strong>UART OTA (<code>flash_fw_uart.py</code>):</strong> 115200 baud streaming update for
+				bridge nodes (like the E104-BT05-TB) connected directly to host servers.
+			</li>
+		</ul>
+	</div>
+
+	<h2><span class="anchor-hash">#</span>what came next</h2>
+	<p>
+		With a reliable hardware programmer and an unbrickable recovery path, the next step was the central
+		question: how do you compile modern Rust for a microcontroller architecture that LLVM has never heard of?
+	</p>
+	<p>
+		Next: the toolchain odyssey — from regex post-processing scripts to native LLVM backend code generation.
+	</p>
+</Post>

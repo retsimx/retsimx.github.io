@@ -1,0 +1,188 @@
+---
+import Post from '../../../layouts/Post.astro';
+import Mermaid from '../../../components/Mermaid.astro';
+---
+
+<Post title="The toolchain odyssey" part={3} date="2026-08-16" series="tlsr8266-firmware">
+	<p class="tagline">
+		Rust has no native TC32 target. To compile pure Rust for the TLSR8266, I evolved the toolchain
+		from a fragile pipeline of regex-based Python scripts into an upstream-tracked LLVM backend fork
+		with whole-module dead-code elimination.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the architecture mismatch</h2>
+	<p>
+		The Telink TC32 core is an architectural oddity. Functionally, it executes an instruction set
+		very close to ARM Thumb-16. However, Telink made several arbitrary design departures:
+	</p>
+	<ul>
+		<li>
+			<strong>Renamed Mnemonics:</strong> Instructions were given custom prefixes (e.g. <code>add</code> became <code>tadd</code>,
+			<code>b</code> became <code>tj</code>, <code>ldr</code> became <code>tloadr</code>, <code>str</code> became <code>tstorer</code>).
+		</li>
+		<li>
+			<strong>Assembler Directives:</strong> Standard GNU as directives like <code>.thumb_func</code>, <code>.p2align</code>,
+			and <code>.globl</code> cause syntax errors in the Telink assembler; it expects <code>.tc32_func</code>, <code>.align</code>,
+			and <code>.global</code>.
+		</li>
+		<li>
+			<strong>Section Semantics:</strong> Dead-code elimination (<code>--gc-sections</code>) only works if every
+			function and data object is emitted in its own explicit <code>.section .text.&lt;symbol&gt;</code> declaration.
+		</li>
+	</ul>
+	<p>
+		Because <code>rustc</code> and LLVM had zero knowledge of TC32, building firmware required a custom
+		compilation strategy.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>phase 1: the regex era</h2>
+	<p>
+		Early on, the build pipeline was a fragile chain of scripts. I targeted <code>thumbv6m-none-eabi</code> with
+		Rust, emitted raw LLVM IR (<code>.ll</code>), and ran it through custom Python fixups.
+	</p>
+
+	<Mermaid>{`flowchart LR
+		RUST["Rust Crates<br/>(thumbv6m)"] -->|"cargo build<br/>--emit=llvm-ir"| IR["LLVM IR (.ll)"]
+		IR -->|"fix_ir.py<br/>(Intrinsic patching)"| IR2["Patched IR (.ll2)"]
+		IR2 -->|"Standard llc<br/>-march=thumb -mcpu=arm9"| S["ARM Assembly (.s)"]
+		S -->|"fix_asm.py<br/>(57 regex replacements)"| TC32["TC32 Assembly (.tc32)"]
+		TC32 -->|"tc32-elf-as + ld"| BIN["Firmware Binary (.bin)"]`}</Mermaid>
+
+	<h3>1. Patching IR Intrinsics (<code>fix_ir.py</code>)</h3>
+	<p>
+		Rust's standard core library emits ARM synchronization intrinsics (such as <code>ldrex</code>/<code>strex</code>,
+		<code>sev</code>, and <code>mrs</code>/<code>msr</code> status register reads). The TC32 core lacks these instructions.
+		<code>fix_ir.py</code> performed string replacements on the IR before passing it to LLC:
+	</p>
+
+	<pre><code>{`# fix_ir.py: Converting unsupported ARM intrinsics to simple loads/stores
+replaced = {
+    "%0 = tail call noundef i32 @llvm.arm.ldrex.p0(...)": "%0 = load i32, ptr %p, align 4",
+    "%0 = tail call noundef i32 @llvm.arm.strex.p0(...)": "store i32 %value, ptr %addr, align 4\\n  %0 = load i32, ptr %addr, align 4",
+    "tail call void @llvm.arm.hint": "; tail call void @llvm.arm.hint",
+    "tail call void asm sideeffect alignstack \\"sev\\"": "; tail call void asm sideeffect alignstack \\"sev\\"",
+    "%0 = tail call i32 asm sideeffect \\"mrs \${0},CONTROL\\"": "%0 = tail call i32 asm sideeffect \\"add sp, \${0}\\"",
+}`}</code></pre>
+
+	<h3>2. Rewriting Assembly (<code>fix_asm.py</code>)</h3>
+	<p>
+		Next, <code>llc</code> emitted standard ARM Thumb assembly. <code>fix_asm.py</code> parsed that output,
+		mapping over 50 instruction mnemonics and maintaining a small state machine to inject per-symbol section names:
+	</p>
+
+	<pre><code>{`# fix_asm.py: Rewriting ARM instructions to Telink TC32
+replaced = {
+    '\\tadcs\\t': '\\ttaddc\\t',
+    '\\tadd\\t': '\\ttadd\\t',
+    '\\tb\\t': '\\ttj\\t',
+    '\\tbeq\\t': '\\ttjeq\\t',
+    '\\tbne\\t': '\\ttjne\\t',
+    '\\tldm\\t': '\\ttloadm\\t',
+    '\\tldr\\t': '\\ttloadr\\t',
+    '\\tstr\\t': '\\ttstorer\\t',
+    '\\tpush\\t': '\\ttpush\\t',
+    '\\tpop\\t': '\\ttpop\\t',
+
+    # Fuck this instruction
+    '\\tadr\\t': '\\ttj .\\t@',
+}`}</code></pre>
+
+	<div class="callout warn">
+		<span class="callout-label">WHY THIS FAILED</span>
+		<p>
+			This regex pipeline was fragile. A minor Rust compiler update, a new inlining decision,
+			or an unexpected register allocation would produce an ARM instruction variant that slipped past the regex
+			table, causing silent syntax errors or runtime crashes on the hardware.
+		</p>
+	</div>
+
+	<h2><span class="anchor-hash">#</span>phase 2: the native LLVM backend fork</h2>
+	<p>
+		To make builds reproducible and maintainable, I discarded the Python post-processing scripts
+		and built native TC32 support directly into LLVM (<a href="https://github.com/retsimx/llvm-project/tree/tc32">retsimx/llvm-project (tc32 branch)</a>).
+	</p>
+	<p>
+		Rather than writing an entire standalone target backend from scratch (which would require maintaining thousands
+		of lines of TableGen target definitions), I customized LLVM's ARM Thumb backend — targeting the IR pass
+		pipeline and assembly streamer infrastructure to transform unsupported intrinsics, maintain an assembly-time section
+		state machine, and emit native TC32 mnemonics directly.
+	</p>
+
+	<Mermaid>{`flowchart LR
+		IR["Rust Bitcode (.bc)"] -->|"TC32IRFixupPass<br/>(Transforms intrinsics)"| CODEGEN["LLVM CodeGen"]
+		CODEGEN -->|"MCAsmStreamer<br/>(Section state machine)"| PRINTER["ARMInstPrinter<br/>(Direct TC32 mnemonics)"]
+		PRINTER -->|"Native emission"| ASM["TC32 Assembly (.s)"]`}</Mermaid>
+
+	<h3>Key LLVM Modifications (7 Core Files)</h3>
+	<p>
+		The changes span seven core files across the LLVM ARM target and MC layer:
+	</p>
+	<table>
+		<thead>
+			<tr><th>File</th><th>Purpose</th></tr>
+		</thead>
+		<tbody>
+			<tr><td><code>TC32IRFixupPass.cpp</code></td><td>Native IR pass transforming <code>ldrex</code>/<code>strex</code>, erasing <code>sev</code>/<code>hint</code>, and replacing status register inline asm with no-ops.</td></tr>
+			<tr><td><code>MCAsmStreamer.cpp</code></td><td>Assembly-time state machine that tracks symbol definitions and emits explicit <code>.section .text.&lt;symbol&gt;</code> and <code>.section .data.&lt;symbol&gt;</code> directives.</td></tr>
+			<tr><td><code>ARMInstPrinter.cpp</code></td><td>Emits TC32-specific mnemonics (<code>tadd</code>, <code>tj</code>, <code>tloadr</code>, <code>tstorer</code>) directly during assembly printing.</td></tr>
+			<tr><td><code>ARMELFStreamer.cpp</code></td><td>Emits <code>.tc32_func</code> instead of <code>.thumb_func</code>, suppresses unsupported <code>.cpu</code> directives, and resets section state at <code>.fnend</code>.</td></tr>
+			<tr><td><code>MCAsmInfoELF.cpp</code></td><td>Comments out standard monolithic <code>.section</code> switches to prevent state pollution.</td></tr>
+			<tr><td><code>ARMMCAsmInfo.cpp</code></td><td>Configures assembler syntax flags, comment characters, and alignment directives for the TC32 toolchain.</td></tr>
+			<tr><td><code>ARMTargetMachine.cpp</code></td><td>Registers the <code>TC32IRFixupPass</code> in the code generation pass pipeline.</td></tr>
+		</tbody>
+	</table>
+
+	<h2><span class="anchor-hash">#</span>the cold function compiler trap</h2>
+	<div class="callout warn">
+		<span class="callout-label">THE .text.unlikely TRAP (COMMIT e791428)</span>
+		<p>
+			When LLVM emitted a <code>switchSection</code> for cold functions or compiler builtins (like <code>.text.unlikely.</code> or <code>.text.__aeabi_*</code>),
+			the TC32 backend commented out the directive to prevent syntax errors.
+		</p>
+		<p>
+			However, this set <code>TC32SectionSeen = true</code> in the streamer state machine. When the <em>next</em> real
+			function was emitted, the state machine assumed a section directive was already active and skipped injecting <code>.section .text.&lt;name&gt;</code>!
+		</p>
+		<p>
+			The consequence was subtle: unrelated functions fused into monolithic sections, completely bypassing GNU ld's <code>--gc-sections</code>.
+			Fixing this by explicitly exempting <code>.text.*</code> prefix switches restored per-symbol sections across all Rust crates.
+		</p>
+	</div>
+
+	<h2><span class="anchor-hash">#</span>phase 3: whole-module optimization (<code>llvm-link</code> + <code>opt</code>)</h2>
+	<p>
+		With only 16 KB of SRAM and a 512 KB flash partitioned for dual-bank OTA updates, every byte
+		of machine code mattered.
+	</p>
+	<p>
+		Because individual Rust crates are compiled separately by Cargo, cross-crate inlining and constant
+		propagation were missed at crate boundaries. I introduced a <strong>whole-module optimization pipeline</strong> into the Makefile:
+	</p>
+
+	<Mermaid>{`flowchart LR
+		CRATES["Crate Bitcode Files<br/>(app.bc, sdk.bc, ...)"] -->|"llvm-link"| MERGED["Linked IR Module (.bc)"]
+		MERGED -->|"opt -passes=ipsccp,deadargelim<br/>(Double-pass optimization)"| OPT["Optimized Bitcode (.bc)"]
+		OPT -->|"Native TC32 llc"| ASM["Assembly (.s)"]
+		ASM -->|"tc32-elf-as + ld --gc-sections"| OUT["Final Binary (77,788 bytes)"]`}</Mermaid>
+
+	<p>
+		By linking all crate bitcode files together with <code>llvm-link</code> and executing double passes of
+		<strong>Interprocedural Sparse Conditional Constant Propagation (<code>ipsccp</code>)</strong> and
+		<strong>Dead Argument Elimination (<code>deadargelim</code>)</strong>, LLVM was able to resolve constants
+		and prune unused code across crate boundaries.
+	</p>
+	<p>
+		Combined with the linker's <code>--gc-sections</code>, firmware size dropped from <strong>79,948 bytes</strong> down
+		to <strong>78,040 bytes</strong> on the initial link, and finally to <strong>77,788 bytes</strong> — saving RAM
+		headroom while speeding up OTA deployment.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>what came next</h2>
+	<p>
+		With a toolchain producing clean TC32 binaries from Rust, I could finally tackle the firmware
+		itself: rewriting the drivers, building an async runtime, and eliminating every vendor binary blob.
+	</p>
+	<p>
+		Next: writing pure Rust firmware — and tracking down a 2-byte alignment bug in the BLE authentication path.
+	</p>
+</Post>

@@ -1,0 +1,246 @@
+---
+import Post from '../../../layouts/Post.astro';
+import Mermaid from '../../../components/Mermaid.astro';
+---
+
+<Post title="Pure Rust firmware" part={4} date="2026-08-16" series="tlsr8266-firmware">
+	<p class="tagline">
+		Replacing vendor C blobs with safe Rust: an async cubic-easing tween engine with 32,767
+		resolution levels, 3.06 kHz flicker-free PWM, custom BLE GATT/AES-CCM stacks, and conquering
+		the 2-byte alignment bug.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the tweening engine: from 100 steps to 32,767</h2>
+	<p>
+		The core motivator for this entire firmware was eliminating the stepped transitions of the
+		OEM firmware. The vendor's stock implementation treated lighting as discrete, instant steps.
+		My Rust implementation replaces this with a continuous, fixed-point tweening engine.
+	</p>
+
+	<table>
+		<thead>
+			<tr><th>Feature</th><th>Stock OEM Firmware</th><th>Rust Firmware</th></tr>
+		</thead>
+		<tbody>
+			<tr><td><strong>Brightness Resolution</strong></td><td>100 steps (1% increments)</td><td><strong>32,767 levels</strong> (<code>I16F16</code> fixed-point, <code>0x0000–0x7FFF</code>)</td></tr>
+			<tr><td><strong>Colour Temperature Resolution</strong></td><td>255 steps (1 byte)</td><td><strong>32,767 levels</strong> (<code>I16F16</code> fixed-point per channel)</td></tr>
+			<tr><td><strong>PWM Resolution & Frequency</strong></td><td>255 ticks (~600 Hz)</td><td><strong>10,455 compare ticks @ 3.06 kHz</strong> (IEEE 1789 flicker-free)</td></tr>
+			<tr><td><strong>Transition Model</strong></td><td>Instant step snapping (0 ms)</td><td><strong>1,500 ms non-blocking cubic easing</strong> (100 Hz update loop)</td></tr>
+			<tr><td><strong>Sub-step Blending</strong></td><td>Jumps immediately to new target</td><td><strong>Dynamic trajectory re-targeting</strong> from current mid-point</td></tr>
+		</tbody>
+	</table>
+
+	<h3>Dynamic Sub-Step Blending</h3>
+	<p>
+		When a central controller manages circadian dawn/dusk fading, it sends target updates every few
+		seconds. If a bulb is halfway through a 1.5-second fade when a new target arrives, restarting from
+		scratch causes a visible jump.
+	</p>
+	<p>
+		In <code>rust/src/light_manager.rs</code>, the <code>Transition</code> struct tracks the exact current
+		state and blends seamlessly:
+	</p>
+
+	<pre><code>{`impl Transition {
+    fn begin_at(&mut self, start: Instant, to: I16F16) {
+        // If already heading to this target, don't interrupt the curve
+        if to == self.to {
+            return;
+        }
+        // Smoothly blend from whatever intermediate value we currently have
+        self.from = self.current;
+        self.start = start;
+        self.end = start + Duration::from_millis(TRANSITION_TIME_MS);
+        self.to = to;
+    }
+
+    fn step_at(&mut self, now: Instant) -> bool {
+        if now >= self.end {
+            self.current = self.to;
+            return false;
+        }
+        let elapsed = (now - self.start).as_ticks();
+        let total = (self.end - self.start).as_ticks();
+        let t = I16F16::from_num(elapsed * MAX_LUM_BRIGHTNESS_VALUE as u64 / total);
+        self.current = ease_in_out(t, self.from, self.to - self.from);
+        true
+    }
+}`}</code></pre>
+
+	<h2><span class="anchor-hash">#</span>the firmware architecture</h2>
+	<p>
+		The stock Telink C SDK was a tangled web of global mutable arrays, uncontrolled interrupts,
+		and opaque library calls. My goal in rewriting the firmware was architectural clarity:
+		zero heap allocation, strict memory safety, non-blocking async execution, and zero vendor binary blobs.
+	</p>
+	<p>
+		Execution begins in a minimal 250-line assembly reset stub (<code>cstartup_8266.S</code>) that initializes
+		the 2 KB IRQ stack and clears BSS before jumping immediately into Rust (<code>main_entrypoint</code>).
+		From that point onward, the entire system is safe Rust — eliminating every line of vendor C and removing
+		all proprietary binary libraries (<code>libble_app_8266.a</code>).
+	</p>
+
+	<Mermaid>{`flowchart TB
+		subgraph app["Application Layer"]
+			LIGHT["Light Manager<br/>(Smooth PWM Easing)"]
+			RESET["Factory Reset Engine<br/>(5-Step Power Cycle in Flash)"]
+			ASYNC["Cooperative Async Executor<br/>(Timers, Tick Tasks)"]
+		end
+
+		subgraph protocol["Protocol & Network Stack"]
+			GATT["GATT Server<br/>(ble_ll_attribute.rs)"]
+			PAIR["Pairing Engine<br/>(ble_ll_pair.rs)"]
+			MESH["Mesh Packet Engine<br/>(light_ll / Flood Relay)"]
+			CRYPTO["AES-CCM & Key Derivation<br/>(crypto.rs)"]
+		end
+
+		subgraph hal["Hardware Abstraction Layer (HAL)"]
+			MMIO["Register MMIO (0x800000)"]
+			PWM["PWM Controller (LEDs)"]
+			RF["RF Baseband & DMA"]
+			FLASH["SPI Flash Driver"]
+			UART["UART Manager"]
+		end
+
+		app --> protocol
+		protocol --> hal`}</Mermaid>
+
+	<h2><span class="anchor-hash">#</span>non-blocking lighting: the async engine</h2>
+	<p>
+		Smart lighting demands smooth transitions: when turning a bulb on or adjusting color
+		temperature, stepping abruptly looks cheap. However, running blocking delay loops
+		starves the BLE link layer, dropping mesh packets and causing connection timeouts.
+	</p>
+	<p>
+		I built a lightweight <strong>cooperative async executor</strong> that drives smooth easing curves
+		concurrently across brightness and color channels:
+	</p>
+	<ul>
+		<li>
+			<strong>Fixed-Point Easing:</strong> Uses integer easing curves (ease-in/ease-out) to avoid
+			software floating-point emulation overhead on the TC32 core.
+		</li>
+		<li>
+			<strong>Single Timestamp Sampling (Commit efb7666):</strong> Captures <code>Instant::now()</code> once
+			per tick rather than across individual channel functions, preventing color temperature from drifting
+			behind brightness during fast fades.
+		</li>
+		<li>
+			<strong>Concurrent Channel Transitions (Commit 72a952c):</strong> Refactored the transition loop to
+			drive independent easing state machines across brightness, warm white, and cool white channels simultaneously.
+		</li>
+		<li>
+			<strong>Zero-Allocation Deques (Commit cb67065):</strong> Early builds used async channels whose internal
+			buffers blew the single stack pointer in RAM. Migrating to a compact heapless <code>Deque</code> fixed stack
+			overflows and guaranteed zero heap fragmentation.
+		</li>
+	</ul>
+
+	<h2><span class="anchor-hash">#</span>re-implementing the protocol stack</h2>
+	<p>
+		With the hardware layer running, I systematically reimplemented the four core protocol modules
+		in pure Rust:
+	</p>
+
+	<h3>1. GATT Server (<code>ble_ll_attribute.rs</code>)</h3>
+	<p>
+		Implements the Bluetooth Low Energy attribute table. Handles UUID discovery, MTU negotiation,
+		read/write permission gating, and notification dispatching for characteristics <code>0x1914</code> (Pair),
+		<code>0x1912</code> (Command), and <code>0x1911</code> (Notify).
+	</p>
+
+	<h3>2. Pairing & Security (<code>ble_ll_pair.rs</code>)</h3>
+	<p>
+		Implements the BLE pairing state machine across 12 distinct pairing states. Manages random nonces,
+		challenge-response validation, ephemeral session key derivation, and persistent provisioning of the
+		Long-Term Key (LTK) into SPI flash.
+	</p>
+
+	<h3>3. Mesh Engine (<code>light_ll/</code>)</h3>
+	<p>
+		Handles RF mesh packet parsing, sequence counter tracking (for deduplication), target group
+		filtering, and multi-hop flood relaying.
+	</p>
+
+	<h3>4. Hardware Crypto (<code>crypto.rs</code>)</h3>
+	<p>
+		Interfaces directly with the TLSR8266's hardware AES-128 engine at register offset <code>0x540</code>.
+		Executes authenticated AES-CCM (Counter with CBC-MAC) mesh frame encryption directly on silicon without
+		software crypto emulation.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the de-blobbing milestones & battle scars</h2>
+	<p>
+		The transition from vendor C libraries to pure Rust happened in stages. Each milestone stripped away
+		another piece of the proprietary SDK until <code>libble_app_8266.a</code> could be removed from the build:
+	</p>
+
+	<table>
+		<thead>
+			<tr><th>Commit</th><th>Milestone</th><th>Result</th></tr>
+		</thead>
+		<tbody>
+			<tr><td><code>1670c1f</code></td><td>Start reversing <code>light_ll</code></td><td>Ghidra decompilation mapped to initial Rust structs</td></tr>
+			<tr><td><code>3c2b31e</code></td><td>First build without vendor libs</td><td><code>libble_app_8266.a</code> unlinked from Makefile</td></tr>
+			<tr><td><code>646bafc</code></td><td>Deleted <code>light_ll.o</code> & <code>shared_mem.o</code></td><td><strong>0% vendor binary code remaining</strong></td></tr>
+			<tr><td><code>0ba8a91</code></td><td>Fix <code>irq_st_bridge</code> & connection flow</td><td>Resolved race conditions during RF interrupt dispatching</td></tr>
+			<tr><td><code>c4d02cf</code></td><td>The 2-byte alignment fix</td><td>Restored BLE authentication and pairing</td></tr>
+			<tr><td><code>b624062</code></td><td>Fix inlined <code>.ram_code</code> explosion</td><td>Prevented RAM exhaustion on flash sector write routines</td></tr>
+			<tr><td><code>8486d87</code> / <code>c0a1c8d</code></td><td>Fix signed math overflow</td><td>Eliminated lumen calculation wrap-around flash</td></tr>
+		</tbody>
+	</table>
+
+	<div class="callout warn">
+		<span class="callout-label">THE RAMCODE EXPLOSION (COMMIT b624062)</span>
+		<p>
+			Because SPI flash cannot be read while executing sector erase/write operations, all flash routines
+			must execute from SRAM (marked with <code>#[link_section = ".ram_code"]</code>).
+		</p>
+		<p>
+			In early release builds, LLVM aggressively inlined these <code>.ram_code</code> functions into dozens of
+			callers throughout the codebase. Because each inlined copy inherited the RAM section attribute, the
+			entire 16 KB SRAM was consumed before <code>main()</code> even executed. Adding <code>#[inline(never)]</code> to
+			flash primitives restored SRAM headroom.
+		</p>
+	</div>
+
+	<div class="callout warn">
+		<span class="callout-label">THE 2-BYTE ALIGNMENT BUG (COMMIT c4d02cf)</span>
+		<p>
+			After removing the vendor blobs, the firmware booted and advertised correctly, but BLE pairing
+			consistently failed at the cryptographic handshake.
+		</p>
+		<p>
+			The cause turned out to be alignment: as far as I could tell from the decompiled blob, the packet buffers
+			arriving from the RF DMA FIFO and global link-layer data structures were packed at unaligned offsets.
+			Because TC32 does not support unaligned 32-bit reads, integer loads during the MAC calculation silently loaded
+			corrupted bytes.
+		</p>
+		<p>
+			Enforcing strict 4-byte struct alignment via <code>#[repr(C, align(4))]</code> in Rust resolved the issue,
+			bringing pairing and mesh communication to reliable operation.
+		</p>
+	</div>
+
+	<h2><span class="anchor-hash">#</span>multi-power-cycle factory reset</h2>
+	<p>
+		Smart bulbs installed in ceiling sockets have no physical buttons. In <code>rust/src/sdk/factory_reset.rs</code>,
+		I implemented an exact <strong>5-step power cycle state machine</strong> stored in SPI flash:
+	</p>
+	<ul>
+		<li><strong>Steps 1–3:</strong> The light must be turned off within <strong>0–3 seconds</strong> of powering on.</li>
+		<li><strong>Steps 4–5:</strong> The light must be powered on for <strong>3–30 seconds</strong> before turning off.</li>
+		<li>If steady power is maintained for over 30 seconds, the sequence aborts and clears the state flags.</li>
+		<li>If all 5 timing windows are completed in sequence, the reset engine wipes the mesh credentials and boots into pairing mode (<code>out_of_mesh</code>).</li>
+	</ul>
+
+	<h2><span class="anchor-hash">#</span>what came next</h2>
+	<p>
+		The firmware was pure Rust, zero-blob, and running stably on individual bulbs. But to deploy
+		it across an entire home network, I needed systematic host-side unit testing, automated CI, and a
+		serial gateway bridge into home automation.
+	</p>
+	<p>
+		Next: host-side MMIO register mocking with the <code>mry</code> crate, GitHub Actions branch coverage, and the UART mesh gateway.
+	</p>
+</Post>

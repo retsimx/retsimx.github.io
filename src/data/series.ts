@@ -1,5 +1,5 @@
-// Project CB — MyAir Control Bridge series metadata.
-// Shared by the hub page and the per-part prev/next navigation.
+// Series metadata for multi-part project write-ups.
+// Shared by the hub pages and the per-part prev/next navigation.
 
 export interface SeriesPart {
 	n: number;
@@ -8,9 +8,19 @@ export interface SeriesPart {
 	blurb: string;
 }
 
-export const seriesHub = '/projects/myair-bridge/';
+export interface SeriesConfig {
+	id: string;
+	hub: string;
+	title: string;
+	parts: SeriesPart[];
+	partHref: (part: SeriesPart) => string;
+}
 
-export const seriesParts: SeriesPart[] = [
+// -----------------------------------------------------------------------------
+// Project CB — MyAir Control Bridge
+// -----------------------------------------------------------------------------
+
+export const myairParts: SeriesPart[] = [
 	{
 		n: 1,
 		slug: 'why-own-the-bus',
@@ -43,6 +53,85 @@ export const seriesParts: SeriesPart[] = [
 	},
 ];
 
-export function partHref(part: SeriesPart): string {
-	return `${seriesHub}${part.n}-${part.slug}/`;
+export const myairHub = '/projects/myair-bridge/';
+
+export function myairPartHref(part: SeriesPart): string {
+	return `${myairHub}${part.n}-${part.slug}/`;
 }
+
+// -----------------------------------------------------------------------------
+// Project Lumen — Reverse Engineering the TLSR8266
+// -----------------------------------------------------------------------------
+
+export const tlsr8266Parts: SeriesPart[] = [
+	{
+		n: 1,
+		slug: 'the-silicon-and-the-blob',
+		title: 'The silicon and the blob',
+		blurb: 'Decompiling proprietary Telink SDKs with Ghidra, understanding TC32, and mapping the Tuya BLE Mesh protocol.',
+	},
+	{
+		n: 2,
+		slug: 'single-wire-programmer',
+		title: 'The single-wire programmer',
+		blurb: "Speaking Telink's proprietary SWS debug protocol with an overclocked RP2040 PIO state machine.",
+	},
+	{
+		n: 3,
+		slug: 'toolchain-odyssey',
+		title: 'The toolchain odyssey',
+		blurb: 'Compiling Rust for an unsupported architecture: from fragile regex scripts to a native LLVM backend.',
+	},
+	{
+		n: 4,
+		slug: 'pure-rust-firmware',
+		title: 'Pure Rust firmware',
+		blurb: 'Achieving 0% vendor dependency: async light fading, custom BLE stack, and conquering the 2-byte alignment bug.',
+	},
+	{
+		n: 5,
+		slug: 'verification-and-bridge',
+		title: 'Verification, CI, and the smart mesh bridge',
+		blurb: 'Mocking hardware MMIO on x86, branch-coverage CI, and bridging the mesh into home automation.',
+	},
+];
+
+export const tlsr8266Hub = '/projects/tlsr8266-firmware/';
+
+export function tlsr8266PartHref(part: SeriesPart): string {
+	return `${tlsr8266Hub}${part.n}-${part.slug}/`;
+}
+
+// -----------------------------------------------------------------------------
+// Series Registry
+// -----------------------------------------------------------------------------
+
+export const seriesRegistry: Record<string, SeriesConfig> = {
+	'myair-bridge': {
+		id: 'myair-bridge',
+		hub: myairHub,
+		title: 'Project CB — MyAir Control Bridge',
+		parts: myairParts,
+		partHref: myairPartHref,
+	},
+	'tlsr8266-firmware': {
+		id: 'tlsr8266-firmware',
+		hub: tlsr8266Hub,
+		title: 'Reverse Engineering the TLSR8266: From Vendor Blobs to LLVM and Rust',
+		parts: tlsr8266Parts,
+		partHref: tlsr8266PartHref,
+	},
+};
+
+export function getSeries(id: string): SeriesConfig {
+	const conf = seriesRegistry[id];
+	if (!conf) {
+		throw new Error(`Unknown series: ${id}`);
+	}
+	return conf;
+}
+
+// Backwards-compatibility aliases for existing myair-bridge code
+export const seriesParts = myairParts;
+export const seriesHub = myairHub;
+export const partHref = myairPartHref;

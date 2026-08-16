@@ -1,0 +1,102 @@
+---
+import Base from '../../../layouts/Base.astro';
+import Mermaid from '../../../components/Mermaid.astro';
+import { tlsr8266Parts, tlsr8266PartHref } from '../../../data/series';
+---
+
+<Base title="Reverse Engineering the TLSR8266: From Vendor Blobs to LLVM and Rust">
+	<p><a href="/">← back to home</a></p>
+
+	<h1>Reverse Engineering the TLSR8266: From Vendor Blobs to LLVM and Rust</h1>
+	<div style="margin: 0.75rem 0 1.5rem">
+		<span class="badge live">● live in production</span>
+		<span class="badge">rust</span>
+		<span class="badge">llvm</span>
+		<span class="badge">tc32</span>
+		<span class="badge">ble mesh</span>
+		<span class="badge">reverse engineering</span>
+		<span class="badge">rp2040</span>
+	</div>
+
+	<p class="tagline">
+		Literally all of this exists because I wanted my smart lights to smoothly tween between
+		colour temperatures at dawn and dusk. How a hatred of aggressive snapping and a flaky vendor
+		Wi-Fi bridge spiralled into an overclocked RP2040 programmer, Ghidra decompilation of
+		proprietary Telink blobs, an LLVM backend fork, and a pure Rust firmware.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the final architecture</h2>
+	<Mermaid>{`flowchart TB
+		subgraph toolchain["LLVM & Rust Pipeline"]
+			direction LR
+			RUST["Pure Rust Crates<br/>(no_std, embedded-hal)"] -->|"cargo build<br/>--emit=llvm-ir"| BC["LLVM Bitcode (.bc)"]
+			BC -->|"llvm-link + opt<br/>double-ipsccp + deadargelim"| OPT["Whole-Module IR (.bc)"]
+			OPT -->|"Native TC32 llc<br/>TC32IRFixupPass"| ASM["TC32 Assembly (.s)"]
+			ASM -->|"tc32-elf-as + tc32-elf-ld<br/>--gc-sections"| BIN["Firmware Binary (.bin)<br/>(77.7 KB)"]
+		end
+
+		subgraph hardware["Physical Hardware & Mesh"]
+			direction LR
+			DEV["E104-BT05-TB<br/>Mesh Bridge Node"] <-->|"44-byte UART Packets<br/>115200 8N1 (CRC16)"| DAEMON["Smart Manager Daemon<br/>(Rust / MQTT)"]
+			DEV <-->|"BLE 1Mbps GFSK<br/>2.4GHz AES-CCM Mesh"| BULB1["Smart Light #1<br/>(TYBT1 / TLSR8266)"]
+			BULB1 <-->|"Multi-hop Mesh Flood"| BULB2["Smart Light #2<br/>(TYBT1 / TLSR8266)"]
+		end
+
+		toolchain ==>|"SWire (RP2040) / BLE OTA / UART OTA"| hardware`}</Mermaid>
+
+	<p>
+		The stock firmware in consumer Tuya BLE bulbs runs on the Telink TLSR8266: an obscure
+		32-bit RISC SoC built around Telink's proprietary "TC32" instruction set. Out of the box,
+		the vendor setup was annoying: a cheap USB Wi-Fi/BLE bridge that dropped packets, only 100
+		brightness steps and 255 colour increments, and zero on-device interpolation. When the central
+		controller sent sub-step updates during a 30-minute sunset fade, the downlights visibly stepped and
+		strobed hard enough that other people in the house noticed.
+	</p>
+	<p>
+		Today, every bulb in my house runs firmware written in Rust, compiled via an upstream-tracked
+		LLVM fork, running a cooperative async runtime with 32,767 internal levels of easing,
+		10,455-tick PWM at 3.06 kHz, and zero vendor code.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the series</h2>
+	<ul class="series-list">
+		{tlsr8266Parts.map((p) => (
+			<li>
+				<span class="series-n">part {p.n}</span>
+				<a href={tlsr8266PartHref(p)}>{p.title}</a>
+				<span class="series-blurb">{p.blurb}</span>
+			</li>
+		))}
+	</ul>
+
+	<h2><span class="anchor-hash">#</span>repositories & code</h2>
+	<ul>
+		<li>
+			<a href="https://github.com/retsimx/tlsr8266_mesh">retsimx/tlsr8266_mesh</a> — the
+			Rust BLE mesh firmware, hardware drivers, async executor, and Python flashing/OTA tools
+		</li>
+		<li>
+			<a href="https://github.com/retsimx/llvm-project/tree/tc32">retsimx/llvm-project (tc32 branch)</a> — the
+			forked LLVM toolchain adding native TC32 assembly emission, per-symbol section injection, and IR intrinsic transformations
+		</li>
+	</ul>
+
+	<h2><span class="anchor-hash">#</span>standing on the shoulders of</h2>
+	<ul>
+		<li>
+			<a href="https://rbaron.net/blog/2021/07/06/Reverse-engineering-the-M6-smart-fitness-band.html">Raphael Baron's M6 reverse-engineering work</a> (<a href="https://github.com/rbaron/m6-reveng">rbaron/m6-reveng</a>) —
+			the pioneering analysis of the Telink TLSR8266 hardware, SWS protocol, and memory architecture
+		</li>
+		<li>
+			<a href="https://github.com/trust1995/Ghidra_TELink_TC32">trust1995/Ghidra_TELink_TC32</a> —
+			the Ghidra processor definition for the Telink TC32 architecture that made decompiling the proprietary binary blobs possible
+		</li>
+	</ul>
+
+	<h2><span class="anchor-hash">#</span>status</h2>
+	<div class="status-line">
+		<span><span class="dot"></span>firmware: rust in production</span>
+		<span><span class="dot"></span>toolchain: native llvm llc + opt</span>
+		<span><span class="dot"></span>vendor blobs: 0 remaining</span>
+	</div>
+</Base>

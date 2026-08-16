@@ -13,6 +13,7 @@ import Base from '../layouts/Base.astro';
 		<div class="status-line">
 			<span><span class="dot"></span>home infra: operational</span>
 			<span><span class="dot"></span>aircon bridge: live since 2026-08-12</span>
+			<span><span class="dot"></span>tlsr8266 mesh: rust in production</span>
 		</div>
 	</section>
 
@@ -45,6 +46,22 @@ import Base from '../layouts/Base.astro';
 			</div>
 		</div>
 
+		<div class="card" style="margin-top: 1.5rem;">
+			<h3>Reverse Engineering the TLSR8266: From Vendor Blobs to LLVM and Rust</h3>
+			<div class="card-meta">reverse engineering · rust · llvm · tc32 · ble mesh · rp2040</div>
+			<p>
+				Replacing the proprietary, closed-source C SDK on Tuya smart lights with pure
+				Rust: an overclocked RP2040 SWS programmer, Ghidra decompilation of proprietary link-layer
+				blobs, an LLVM backend fork for Telink TC32, and an async lighting runtime with 32,767
+				discrete easing levels. Five-part write-up.
+			</p>
+			<div class="card-links">
+				<a href="/projects/tlsr8266-firmware">read the series →</a>
+				<a href="https://github.com/retsimx/tlsr8266_mesh">tlsr8266_mesh</a>
+				<a href="https://github.com/retsimx/llvm-project/tree/tc32">llvm-project (tc32)</a>
+			</div>
+		</div>
+
 		<h3>other things I've built</h3>
 		<ul>
 			<li>
@@ -56,10 +73,6 @@ import Base from '../layouts/Base.astro';
 			<li>
 				<a href="https://github.com/retsimx/skylights">skylights</a> — ESP32 control of
 				Velux skylights over MQTT
-			</li>
-			<li>
-				<a href="https://github.com/retsimx/tlsr8266_mesh">tlsr8266_mesh</a> — new Rust
-				firmware for Tuya BLE smart-light modules (TLSR8266)
 			</li>
 			<li>
 				<a href="https://github.com/retsimx/crosbridge-ai">crosbridge-ai</a> — an

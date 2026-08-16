@@ -1,28 +1,34 @@
 ---
 import Base from './Base.astro';
 import SeriesNav from '../components/SeriesNav.astro';
-import { seriesParts, partHref, seriesHub } from '../data/series';
+import { getSeries } from '../data/series';
 
 interface Props {
 	title: string;
 	part: number;
 	date: string;
+	series?: string;
 }
 
-const { title, part, date } = Astro.props;
+const { title, part, date, series = 'myair-bridge' } = Astro.props;
 
-const prev = part > 1 ? { href: partHref(seriesParts[part - 2]), title: seriesParts[part - 2].title } : undefined;
-const next = part < seriesParts.length ? { href: partHref(seriesParts[part]), title: seriesParts[part].title } : undefined;
+const currentSeries = getSeries(series);
+const parts = currentSeries.parts;
+const hub = currentSeries.hub;
+const hubTitle = currentSeries.title;
+
+const prev = part > 1 ? { href: currentSeries.partHref(parts[part - 2]), title: parts[part - 2].title } : undefined;
+const next = part < parts.length ? { href: currentSeries.partHref(parts[part]), title: parts[part].title } : undefined;
 ---
 
 <Base title={title}>
-	<p><a href={seriesHub}>← Project CB — MyAir Control Bridge</a></p>
+	<p><a href={hub}>← {hubTitle}</a></p>
 	<div class="post-meta">
-		<span class="badge">part {part} of {seriesParts.length}</span>
+		<span class="badge">part {part} of {parts.length}</span>
 		<span class="badge">{date}</span>
 	</div>
 	<h1>{title}</h1>
-	<SeriesNav hub={seriesHub} prev={prev} next={next} />
+	<SeriesNav hub={hub} prev={prev} next={next} />
 	<slot />
-	<SeriesNav hub={seriesHub} prev={prev} next={next} />
+	<SeriesNav hub={hub} prev={prev} next={next} />
 </Base>
