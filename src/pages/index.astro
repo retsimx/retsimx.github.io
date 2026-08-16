@@ -1,15 +1,42 @@
-<!doctype html>
-<html lang="en">
-	<head>
-		<meta charset="utf-8" />
-		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-		<link rel="icon" href="/favicon.ico" />
-		<meta name="viewport" content="width=device-width" />
-		<meta name="generator" content={Astro.generator} />
-		<title>retsimx.dev</title>
-	</head>
-	<body>
-		<h1>retsimx's development blog</h1>
-		<p>Coming soon — posts about the things I'm building.</p>
-	</body>
-</html>
+---
+import Base from '../layouts/Base.astro';
+---
+
+<Base title="">
+	<section class="hero">
+		<h1>Lewis Lakerink</h1>
+		<p class="tagline">
+			Software &amp; electronics engineer — home infrastructure, embedded systems, and the
+			occasional HVAC reverse-engineering project.
+		</p>
+		<div class="status-line">
+			<span><span class="dot"></span>home infra: operational</span>
+			<span><span class="dot amber"></span>aircon bridge: live since 2026-08-12</span>
+		</div>
+	</section>
+
+	<section id="about">
+		<h2><span class="anchor-hash">#</span>about</h2>
+		<div class="callout">
+			<span class="callout-label">placeholder</span>
+			Bio coming soon — background, interests, and the tools I reach for. Watch this space.
+		</div>
+	</section>
+
+	<section id="projects">
+		<h2><span class="anchor-hash">#</span>projects</h2>
+
+		<div class="card">
+			<h3>Project CB — MyAir Control Bridge</h3>
+			<div class="card-meta">reverse engineering · rust · rs-485 · home hvac</div>
+			<p>
+				Replacing the OEM wall tablet's role as the RS-485 talker on an Advantage Air Control
+				Box with a Raspberry Pi Zero W running a Rust daemon — single-session WebSocket
+				mailbox API, live in production since August 2026.
+			</p>
+			<div class="card-links"><a href="/projects/myair-bridge">read more →</a></div>
+		</div>
+
+		<p class="status-line"><span class="dot amber"></span>more projects to be added</p>
+	</section>
+</Base>

@@ -1,0 +1,40 @@
+---
+import '../styles/global.css';
+
+const { title } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<link rel="icon" href="/favicon.ico" />
+		<meta name="viewport" content="width=device-width" />
+		<meta name="generator" content={Astro.generator} />
+		<title>{title ?? 'retsimx'} — {title ? 'retsimx.github.io' : ''}</title>
+	</head>
+	<body>
+		<header class="site-header">
+			<div class="site-header-inner">
+				<div class="terminal-prompt">
+					<span class="user">retsimx</span><span class="host">@github.io</span>:~$<span class="cursor"></span>
+				</div>
+				<nav class="site-nav">
+					<a href="/">home</a>
+					<a href="/#projects">projects</a>
+					<a href="/#about">about</a>
+				</nav>
+			</div>
+		</header>
+		<main>
+			<slot />
+		</main>
+		<footer class="site-footer">
+			<div class="site-footer-inner">
+				<span>© 2026 Lewis Lakerink</span>
+				<span>built with Astro · deployed via GitHub Actions</span>
+			</div>
+		</footer>
+	</body>
+</html>

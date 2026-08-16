@@ -1,0 +1,131 @@
+---
+import Base from '../../layouts/Base.astro';
+---
+
+<Base title="Project CB — MyAir Control Bridge">
+	<p><a href="/">← back to home</a></p>
+
+	<h1>Project CB — MyAir Control Bridge</h1>
+	<div style="margin: 0.75rem 0 1.5rem">
+		<span class="badge live">● live since 2026-08-12</span>
+		<span class="badge">rust</span>
+		<span class="badge">rs-485</span>
+		<span class="badge">websocket</span>
+		<span class="badge">android / lineageos</span>
+		<span class="badge">alpine · openrc</span>
+		<span class="badge">influxdb · grafana</span>
+	</div>
+
+	<div class="callout">
+		<span class="callout-label">placeholder</span>
+		Write-up in progress — architecture and lessons learned from the build will land here
+		soon. The facts below are accurate as of the 2026-08-12 cutover.
+	</div>
+
+	<h2><span class="anchor-hash">#</span>overview</h2>
+	<p>
+		The house runs an Advantage Air / MyAir HVAC system whose wall controller is a Samsung
+		Galaxy Tab talking to the vendor's Control Box (CB) over RS-485. This project replaces the
+		tablet's role as the RS-485 talker with a Raspberry Pi Zero W running a Rust daemon
+		(<code>cb-daemon</code>) — a register mailbox sync engine that exposes a single-session
+		WebSocket API for control and state. The tablet now acts purely as a WebSocket client, and
+		the old USB path remains intact for instant rollback.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>architecture</h2>
+<pre><code>┌──────────────────────────────────────────────────────────────┐
+│                 Advantage Air CB Hardware                    │
+└──────────────────────────────┬───────────────────────────────┘
+                               │ RS-485 half-duplex (57600 8N1)
+                               │ Ping ↔ setCAN ↔ getCAN ↔ ackCAN
+                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│      cb-daemon — airconcb (Raspberry Pi Zero W)              │
+│  • Rust register mailbox sync engine (7-byte registers)     │
+│  • Single active session enforced (WS close 4009)           │
+│  • OpenRC supervise-daemon, unlimited respawn               │
+│  • CH340 USB-RS485 dongle → /dev/ttyUSB0                    │
+└──────────────────────────────┬───────────────────────────────┘
+                               │ ws://&lt;host&gt;:2026/v1/mailbox-stream
+                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│      aaservice2 — wall tablet (Galaxy Tab A 8.0)             │
+│  • MyAir UI (myair5) serving legacy :2025 API               │
+│  • Transport-neutral; watchdog-guaranteed start             │
+│  • Telemetry → InfluxDB / Grafana                           │
+└──────────────────────────────────────────────────────────────┘</code></pre>
+
+	<h2><span class="anchor-hash">#</span>components</h2>
+
+	<h3>cb-daemon <span class="badge">rust</span></h3>
+	<p>
+		The heart of the bridge: maintains an in-memory mirror of the CB's register bank and syncs
+		it over the RS-485 bus. Exposes clean JSON schemas mapped 1:1 to hardware registers.
+		Strictly one active WebSocket client at a time — a second client is rejected with WS close
+		code <code>4009</code> to prevent split-brain state mutations on the bus.
+	</p>
+
+	<h3>airconcb <span class="badge">alpine linux · armv6</span></h3>
+	<p>
+		Raspberry Pi Zero W (Alpine 3.24, OpenRC). RS-485 tap (pins 1–2 A/B, 4/6 GND), ~14 V feed
+		via 1 A T fuse → buck → PWR. Logging is RAM-backed (tmpfs, 128 MiB) with aggressive
+		logrotate — volatile across reboot by design.
+	</p>
+
+	<h3>wall tablet <span class="badge">android 11 · lineageos 18.1</span></h3>
+	<p>
+		Samsung Galaxy Tab A 8.0 (SM-T350), Magisk-rooted, running the vendor MyAir UI. Its
+		<code>aaservice2</code> app is now a pure WS client; every register read/write travels
+		through the Pi. Battery held at 40–45% via <code>batt_slate_mode</code>, with battery and
+		system metrics pushed to InfluxDB.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>register mailboxes</h2>
+	<p>The WS API maps 1:1 to the CB's 7-byte register mailboxes:</p>
+	<table>
+		<thead>
+			<tr>
+				<th>reg</th>
+				<th>name</th>
+				<th>role</th>
+			</tr>
+		</thead>
+		<tbody>
+			<tr>
+				<td><code>01</code></td>
+				<td>zone config</td>
+				<td>total zones, constant zone IDs, filter clean flag</td>
+			</tr>
+			<tr>
+				<td><code>02</code></td>
+				<td>unit activation</td>
+				<td>AC brand (Daikin 0x11, Panasonic 0x12…), code activation</td>
+			</tr>
+			<tr>
+				<td><code>03</code></td>
+				<td>zone state (JZ11)</td>
+				<td>zone #, open/close bit + damper %, sensor type, set/measured temp</td>
+			</tr>
+			<tr>
+				<td><code>04 · 05 · 08 · 12</code></td>
+				<td>additional mailboxes</td>
+				<td>remaining register bank, mirrored in the engine snapshot (~27 records)</td>
+			</tr>
+		</tbody>
+	</table>
+
+	<h2><span class="anchor-hash">#</span>safety &amp; rollback</h2>
+	<div class="callout warn">
+		<span class="callout-label">rule</span>
+		Never run two talkers on the CB RS-485 segment. Rollback = disconnect the Pi's RS-485 tap,
+		reconnect the tablet cable path — the tablet resumes driving the bus as before.
+	</div>
+
+	<h2><span class="anchor-hash">#</span>references</h2>
+	<ul>
+		<li>Protocol research: <code>aa_interop</code> (reverse-engineered CB↔tablet RS-485, studied against a CB9)</li>
+		<li>Interface spec: <code>cb_interface_architecture.md</code> — WS mailbox API (approved design, 2026-08-02)</li>
+		<li>Hardware build: <code>custom_cb.md</code> — BOM, wiring, RS-485 tap</li>
+		<li>Ops docs: <code>retsim</code> — <code>devices/myair-tablet.md</code>, <code>hosts/airconcb.md</code></li>
+	</ul>
+</Base>
