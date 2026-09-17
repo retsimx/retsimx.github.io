@@ -1,0 +1,109 @@
+---
+import Base from '../../../layouts/Base.astro';
+import Mermaid from '../../../components/Mermaid.astro';
+import { hunterbttParts, hunterbttPartHref } from '../../../data/series';
+---
+
+<Base title="Project Tap Timer — Rebuilding the Hunter BTT BLE Bridge">
+	<p><a href="/">← back to home</a></p>
+
+	<h1>Project Tap Timer — Rebuilding the Hunter BTT BLE Bridge</h1>
+	<div style="margin: 0.75rem 0 1.5rem">
+		<span class="badge live">● live in production</span>
+		<span class="badge">rust</span>
+		<span class="badge">ble</span>
+		<span class="badge">mqtt</span>
+		<span class="badge">reverse engineering</span>
+		<span class="badge">raspberry pi zero w</span>
+		<span class="badge">home automation</span>
+	</div>
+
+	<p class="tagline">
+		Three battery-powered Hunter BTT-200 tap timers — two irrigation zones each, a ~10 m
+		Bluetooth leash, and a vendor app the internet has not been kind to. The original
+		bridge could talk to them, but slowly enough that Google Home would give up and report
+		the zones offline. This is the story of how I reverse-engineered the protocol, rebuilt
+		the bridge around a persistent connection, and spent a very long day at war with
+		firmware that will not sit still.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the final architecture</h2>
+	<Mermaid>{`flowchart LR
+		HA["home automation<br/>(MQTT valves)"] <-->|"irrigation/s2c<br/>irrigation/c2s"| BR
+
+		subgraph BR["rshunterbtt — Rust, one per timer"]
+			direction TB
+			CONN["persistent connection<br/>+ auth + resubscribe"]
+			NOTIF["ff82 notifications<br/>state cache"]
+			GUARD["interval guard<br/>(HCI monitor)"]
+			CONN --> NOTIF
+			CONN --> GUARD
+		end
+
+		BR <-->|"BLE GATT<br/>persistent link"| TIMER["Hunter BTT tap timer<br/>2×AA, two zones"]
+		BR -->|"battery telemetry"| DB[("InfluxDB")]`}</Mermaid>
+
+	<p>
+		Each bridge owns exactly one timer. It holds a single BLE connection open, authenticates,
+		subscribes to the one characteristic that pushes zone state, and translates between that
+		world and plain MQTT topics. Battery telemetry goes straight to InfluxDB; zone commands
+		and state come from the home automation layer.
+	</p>
+	<p>
+		The hardware's Bluetooth range is about ten metres — plenty for a phone standing at the
+		tap, useless as an always-on integration. A small board parked within range, holding the
+		connection permanently, is the only shape that works. That constraint is why the bridge
+		exists at all, and why "how fast can it answer a query" turned out to be the whole
+		problem.
+	</p>
+	<p>
+		None of that is remarkable. What made it interesting is that almost every assumption I
+		made along the way turned out to be wrong — about where the state lived, what the status
+		bytes meant, and who actually controls the connection interval.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the series</h2>
+	<ul class="series-list">
+		{hunterbttParts.map((p) => (
+			<li>
+				<span class="series-n">part {p.n}</span>
+				<a href={hunterbttPartHref(p)}>{p.title}</a>
+				<span class="series-blurb">{p.blurb}</span>
+			</li>
+		))}
+	</ul>
+
+	<h2><span class="anchor-hash">#</span>repositories</h2>
+	<ul>
+		<li>
+			<a href="https://github.com/retsimx/rshunterbtt">retsimx/rshunterbtt</a> — the Rust
+			MQTT↔BLE bridge: connection manager, notification-driven status, HCI-level interval
+			control, and the resilience ladder
+		</li>
+	</ul>
+
+	<h2><span class="anchor-hash">#</span>standing on the shoulders of</h2>
+	<ul>
+		<li>
+			The OEM Android app — a Cordova app wrapping a tidy little BLE library
+			(<code>com.huiyuan.ble</code>) whose decompiled protocol classes are the only real
+			documentation this hardware has ever had
+		</li>
+		<li>
+			<a href="https://www.bluez.org/">BlueZ</a> and <code>btmon</code> — the HCI event
+			stream is the ground truth for everything the controller actually agreed to do
+		</li>
+		<li>
+			<a href="https://github.com/deviceplug/btleplug">btleplug</a> — the Rust BLE layer,
+			including the escape hatches that make raw-HCI work possible
+		</li>
+	</ul>
+
+	<h2><span class="anchor-hash">#</span>status</h2>
+	<div class="status-line">
+		<span><span class="dot"></span>bridges: live on all three timers</span>
+		<span><span class="dot"></span>state: notification-driven, enum-correct</span>
+		<span><span class="dot"></span>interval: held by the guard at ~1 s</span>
+		<span><span class="dot amber"></span>battery: under observation</span>
+	</div>
+</Base>

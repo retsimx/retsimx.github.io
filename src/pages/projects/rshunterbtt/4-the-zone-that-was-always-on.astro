@@ -1,0 +1,133 @@
+---
+import Post from '../../../layouts/Post.astro';
+import Mermaid from '../../../components/Mermaid.astro';
+---
+
+<Post title="The zone that was always on" part={4} date="2026-09-17" series="rshunterbtt">
+	<p class="tagline">
+		The bridge was reading the correct bytes, the tests were passing, and the home
+		automation dashboard showed all six irrigation zones happily watering. Nothing was wet.
+		The bug survived a full rewrite because everyone — including me — assumed the status
+		byte was a boolean.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>six zones, no water</h2>
+	<p>
+		The first sign was cosmetic, which is why it took me a moment to take seriously. Every
+		irrigation zone in the dashboard sat at "running". Physically, nothing was flowing. The
+		obvious suspects were a stale cache or the old byte-offset bug — but this bridge read
+		the <em>correct</em> bytes (10 and 11), and the values were plain: every zone reported <code>1</code>.
+	</p>
+	<pre><code>{`{"cmd":"status","zone":"grass","status":1,"ack":true}
+{"cmd":"status","zone":"garden","status":1,"ack":true}`}</code></pre>
+	<p>
+		Read that as "1 = on" and the bridge is behaving perfectly. Read the raw characteristic
+		instead and the ambiguity shows up immediately — the device was sitting at rest and
+		reporting <code>0x01</code> in the state byte for both zones of every timer. Six zones
+		"running" across three independent two-zone devices is not a state the hardware can even
+		be in. Something about the interpretation was wrong.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>back to the app, but the right part of it</h2>
+	<p>
+		The decompiled Android APK had already been my source of truth for the protocol, so I
+		went back to it. But the app is Cordova — the interesting logic for <em>interpreting</em> state isn't in the Java, it's in the minified web bundle. The Java
+		protocol class happily parses <code>zone1State</code>/<code>zone2State</code> as bytes
+		and then hands them to the UI, where a function named <code>notifyZoneState_82</code> decides what they mean. Its comparisons are the whole ballgame:
+	</p>
+	<pre><code>if (cmdModel.zone1State == 17 &amp;&amp; cmdModel.zone2State == 17)  // "all zones manual watering started"
+else if (cmdModel.zone1State == 5)                            // "device started watering"
+else if (cmdModel.zone1State == 9)                            // "device started watering"
+else if (cmdModel.zone1State == 1)                            // "monitoring" — i.e. idle
+else if (cmdModel.zone1State == 2)                            // scheduled-watering reminder</code></pre>
+	<p>
+		The state byte is an <strong>enum, not a flag</strong>. The steady-state value the
+		hardware reports when it is doing nothing is <code>1</code> — which the app labels
+		"normal" — while actual watering is <code>5</code>, <code>9</code>, or <code>17</code> depending on how the run was started (remote command, external/manual
+		trigger, or the physical button). The old bridge never had this problem in <em>its</em> output only because it was reading a different byte that happened to be zero.
+	</p>
+	<p>
+		The earlier probe captures had said the same thing months of code ago, for anyone
+		reading carefully. A physical button press produced:
+	</p>
+	<pre><code>press   (zone started):  ...0901...   byte 10 = 0x09
+release (zone stopped):  ...0101...   byte 10 = 0x01</code></pre>
+	<p>
+		<code>9</code> when watering, <code>1</code> when idle — sitting in the notes the entire
+		time, misinterpreted as a boolean toggle between "active" and "inactive".
+	</p>
+
+	<h2><span class="anchor-hash">#</span>a nice bit pattern, for what it's worth</h2>
+	<p>
+		The watering states all share a shape: <code>5 = 0b101</code>,
+		<code>9 = 0b1001</code>, <code>17 = 0b10001</code> — the low bit set, plus one higher
+		bit identifying the run's origin. Whether that's the firmware's actual bitfield design
+		or a coincidence, the app only ever treats <code>{`{5, 9, 17}`}</code> as watering, so that
+		is the set the bridge uses. Enumerating what the vendor does — rather than inventing a
+		bitmask that looks tidier — is the safer choice when the hardware is the specification.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the tests had encoded the wrong belief</h2>
+	<p>
+		The bridge had a test suite, and several tests constructed a status payload with the
+		state byte set to <code>1</code> and asserted that the zone was reported <em>on</em>.
+		They were green. They were green because they tested the code against the same
+		assumption it had been written with — that the byte was a boolean — and an assumption
+		cannot fail its own test.
+	</p>
+	<p>
+		Correcting it meant editing the tests as much as the code: the "active" fixtures moved
+		to <code>5</code>, and a new test pins the actual semantics — <code>{`{5, 9, 17}`}</code> on, <code>{`{0, 1, 2}`}</code> off — against an explicit table. The rule I took from this:
+		when a test encodes a fact about external hardware, that fact needs to be traceable to a
+		capture or a decompiled source, not to the code's own belief about it.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>fixing the state, and keeping it honest</h2>
+	<p>
+		With the enum understood, the bridge maps the byte through <code>matches!(state, 5 | 9 | 17)</code> and everything downstream becomes correct: the
+		dashboard shows closed when the timers are idle, and open when they are genuinely
+		running. A short command-triggered run then a physical button press were both observed
+		reporting state <code>5</code> and <code>9</code> respectively, and dropping back to <code>1</code> when they stopped.
+	</p>
+	<p>
+		Two related fixes went in alongside it, both aimed at the same failure mode — the bridge
+		knowing something the outside world didn't:
+	</p>
+	<ul>
+		<li>
+			<strong>Push state changes to MQTT.</strong> The bridge already received
+			notification-driven state transitions internally (used for logging and telemetry).
+			It now also publishes a status message for the affected zone, so the home automation
+			layer learns about a self-timed stop or a physical button press without having to
+			poll for it.
+		</li>
+		<li>
+			<strong>Make the UI optimistic.</strong> The round-trip to the hardware is
+			seconds-scale, and a control that visibly snaps back while it waits is worse than
+			useless. The automation layer now reflects the requested state immediately and
+			reconciles when the device confirms.
+		</li>
+	</ul>
+
+	<h2><span class="anchor-hash">#</span>lessons, briefly</h2>
+	<ul>
+		<li>
+			"The status byte is a boolean" is exactly the kind of assumption that survives a
+			rewrite, a test suite, and a deployment, because nothing in your own system
+			contradicts it. The hardware contradicts it, silently.
+		</li>
+		<li>
+			The vendor app's <em>interpretation</em> layer was more informative than its parser.
+			Finding the parser was enough to read the protocol; finding the UI comparisons was
+			what told me what the protocol meant.
+		</li>
+		<li>
+			"Status: 1" in a log is not data. The raw bytes, next to the device's actual
+			physical state, are data.
+		</li>
+	</ul>
+	<p>
+		One bug down. The other one — the connection interval — was not a misunderstood value.
+		It was an active disagreement with the firmware, and it is the last part of this series.
+	</p>
+</Post>

@@ -1,0 +1,150 @@
+---
+import Post from '../../../layouts/Post.astro';
+import Mermaid from '../../../components/Mermaid.astro';
+---
+
+<Post title="Holding the line" part={3} date="2026-09-17" series="rshunterbtt">
+	<p class="tagline">
+		If the device will hold a connection and narrate its own state, the bridge should stop
+		behaving like a taxi and start behaving like a phone call. This is the rewrite: one
+		connection held open, authenticated, subscribed — and supervised by a ladder of
+		recovery actions for when the radio inevitably gives up.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the shape of it</h2>
+	<p>
+		The new bridge inverts the old design. Instead of connecting for every operation, it
+		opens one connection and keeps it. Everything else — status reads, battery polls,
+		commands — happens <em>through</em> that connection, and the connection is rebuilt from
+		scratch the moment it drops.
+	</p>
+	<Mermaid>{`sequenceDiagram
+		participant B as bridge (Rust)
+		participant T as tap timer
+		Note over B,T: connection setup (must be re-run in full after any drop)
+		B->>T: scan + connect
+		B->>T: discover services
+		B->>T: write 4-byte password  (ff81)
+		B->>T: request connection interval (raw HCI)
+		B->>T: subscribe to notifications (CCCD on ff82)
+		Note over B,T: steady state — connection held open indefinitely
+		loop state changes
+			T-->>B: ff82 notification (zone state)
+		end
+		B->>T: on_off command (write ff83/ff86/ff8b)
+		T-->>B: status response on MQTT`}</Mermaid>
+	<p>
+		The critical property is that setup is atomic: password auth and the notification
+		subscription <em>do not survive a disconnect</em>. There is no partial-resume. Every
+		reconnect re-runs the whole sequence, which is exactly what the probing in part 2 said
+		would be necessary.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>talking to the radio directly</h2>
+	<p>
+		Two parts of setup I couldn't do through the friendly BLE library, because they are
+		link-layer operations rather than GATT operations.
+	</p>
+	<p>
+		The first is the connection interval. Setting it in the host's Bluetooth configuration
+		is not enough: the controller starts a connection using the peripheral's advertised
+		preferred parameters, and those override the host defaults. The only reliable lever is a
+		raw <code>LE Connection Update</code> command straight down an HCI socket — so I wrote a
+		small module that opens a raw HCI channel, finds the connection handle, and sends the
+		update. That module is also where the retry logic lives, because the device's slowness
+		means the first request sometimes times out before it lands.
+	</p>
+	<p>
+		The second is diagnostics. The interesting failure modes on these hosts are HCI-level —
+		a disconnection reason byte, a command status for the random-address opcode — and no BLE
+		library exposes them. So I had the bridge open an HCI <em>monitor</em> channel and decode
+		a couple of event types itself. At the time I wrote it this was "diagnostic only", and I
+		deliberately kept its escalation decisions out of it. It is also, accidentally, the
+		foundation for the entire fix in part 5 — but it shipped with two encoding bugs that
+		meant it decoded precisely nothing, and I didn't notice, because it was only ever
+		supposed to be logs.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the resilience ladder</h2>
+	<p>
+		A persistent connection that never comes back is worse than no connection, so the
+		supervisor escalates through increasingly aggressive recovery actions, driven purely by
+		consecutive failures. It deliberately does <em>not</em> try to diagnose a root cause
+		first — it just counts, and acts:
+	</p>
+	<table>
+		<thead>
+			<tr><th>rung</th><th>trigger</th><th>action</th><th>rate limit</th></tr>
+		</thead>
+		<tbody>
+			<tr>
+				<td>0</td>
+				<td>any failure</td>
+				<td>reconnect with exponential backoff (1 s → 60 s)</td>
+				<td>—</td>
+			</tr>
+			<tr>
+				<td>1</td>
+				<td>5 consecutive failures in 10 min</td>
+				<td>power-cycle the BLE adapter over D-Bus</td>
+				<td>1 / 15 min</td>
+			</tr>
+			<tr>
+				<td>2</td>
+				<td>10 further failures after rung 1</td>
+				<td>reboot the host (raw <code>reboot(2)</code> syscall)</td>
+				<td>1 / 30 min, ≤3 / 24 h</td>
+			</tr>
+			<tr>
+				<td>3</td>
+				<td>24 h reboot cap reached</td>
+				<td>keep retrying, log loudly, stop escalating</td>
+				<td>—</td>
+			</tr>
+		</tbody>
+	</table>
+	<p>
+		Two details make this work in the field. The adapter power-cycle goes through the
+		system bus, not a shelled-out command, so it doesn't care whether the host runs an init
+		system that exposes a binary for it. And the host reboot is a direct syscall, because
+		these are Alpine/OpenRC machines: there is no login manager and no D-Bus reboot method
+		to call. The bridge falls back to the kernel.
+	</p>
+	<p>
+		The subtlety that would be easy to get wrong: <strong>the rate-limit state has to be
+		persisted to disk</strong>. A reboot restarts the bridge process — which means an
+		in-memory counter cannot rate-limit the very reboot it just performed. The timestamps
+		live in a small file that is fsynced before the reboot, and reloaded on startup, so the
+		escalation ladder survives its own recovery action.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>building for a 2016 board in 2026</h2>
+	<p>
+		The targets are Pi Zero W boards — ARMv6, musl, three of them. I cross-compile the
+		bridge statically from a normal machine and copy it onto each host as a single binary,
+		run under a small service definition that gives it the Bluetooth and system bus access
+		it needs. The dependency injection points that make the code testable — the BLE client,
+		the MQTT client, the database writer, the resilience controller — are all traits, so I
+		can exercise the interesting logic in unit tests with mocks, and only a thin shell
+		touches real hardware.
+	</p>
+	<p>
+		There is an obvious irony in this part of the story: a test suite that verifies my model
+		of the hardware is only as good as that model. Several tests here encoded the assumption
+		that a certain status byte was a boolean — and they passed, happily, while the hardware
+		meant something else entirely. More on that shortly.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the state of play after the rewrite</h2>
+	<p>
+		The bridge now holds its connection, authenticates, subscribes, and reproduces device
+		state over MQTT. Paired with the home automation cutover, six irrigation zones become
+		ordinary controllable things. Everything was deployed, and it worked — for a while.
+	</p>
+	<p>
+		Then the home automation UI started showing every zone as running, and the timers
+		started fighting back about the connection interval. The two bugs that survived a
+		rewrite, a test suite, and a deployment are the two remaining parts of this series — and
+		between them, they took me longer to find than the rewrite took to write.
+	</p>
+</Post>

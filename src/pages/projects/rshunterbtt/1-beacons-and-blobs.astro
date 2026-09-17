@@ -1,0 +1,168 @@
+---
+import Post from '../../../layouts/Post.astro';
+---
+
+<Post title="Beacons and blobs" part={1} date="2026-09-17" series="rshunterbtt">
+	<p class="tagline">
+		Before rewriting anything, one question had to be answered: does the tap timer broadcast
+		its state for anyone listening, or does it only speak when you connect and ask? The
+		answer decided the entire architecture — and getting it meant going through a vendored
+		Cordova app one decompiled class at a time.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the question</h2>
+	<p>
+		The timers are Hunter BTT-200s — battery-powered Bluetooth tap timers, each with two
+		solenoid zones, screwed onto a garden tap. Three of them cover six zones. Out of the
+		box they are programmed by a phone app that has to be within about ten metres of the
+		timer, and the app's store rating sits around three stars with a comments section best
+		described as "candid". The plan was never to use the app. A small bridge already talked
+		to the timers over BLE and surfaced them to the home automation layer, so the phone
+		could stay in a pocket.
+	</p>
+	<p>
+		That bridge had one fatal problem: querying a zone's state could take long enough that
+		the voice assistant would give up and declare the device offline. A zone that reports
+		"offline" half the time is not a zone you can automate. Before rewriting anything, I
+		needed to understand where that latency came from — and the first question decided the
+		entire architecture: does the timer broadcast its state for anyone listening, or does it
+		only speak when you connect and ask?
+	</p>
+	<p>
+		The existing bridge's design was shaped by the assumption that state had to be fetched
+		actively: to read zone state it opened a connection, read a characteristic, and let the
+		connection fall over. If the state were available passively — in the BLE advertisements
+		the timers already broadcast for discovery — the whole problem would collapse into
+		"listen and decode".
+	</p>
+	<p>
+		So the first thing I did was settle it: <strong>beacons or GATT?</strong> The vendor
+		Android app was the only documentation that existed, so I pulled the APK apart.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>a Cordova app with a tidy little BLE library</h2>
+	<p>
+		The app turns out to be a Cordova app — the UI is a web bundle, and all the interesting
+		behaviour lives in a Java plugin package, <code>com.huiyuan.ble</code>. That is unusually
+		pleasant to read: the AIS ("application interface specification") protocol classes are
+		one class per characteristic, each with a <code>toBytes</code>/<code>fromBytes</code> pair. It is the closest thing to a protocol specification this hardware has.
+	</p>
+	<p>
+		The scan path is where the beacon question gets answered. Both the modern scanner and
+		the legacy one funnel every advertisement into the same three fields — device <em>name</em>, <em>RSSI</em>, and advertised <em>service UUIDs</em>:
+	</p>
+	<pre><code>l lVarA = l.a(scanResult.getScanRecord().getBytes());
+this.f783a.a(device, lVarA.f, scanResult.getRssi(), lVarA.f651b);</code></pre>
+	<p>
+		The scan-record parser can decode manufacturer data and service data — but the wrapper
+		never looks at those fields. It only walks the service-UUID list, and uses it for one
+		thing: deciding which generation of device this is. Scanning is discovery-only. There is
+		no passive status path to exploit.
+	</p>
+	<p>
+		<strong>Answer: GATT only.</strong> Reliability would have to come from connection
+		maintenance, not from eavesdropping. That single fact made the rest of the project a
+		connection-reliability problem, not a protocol-decoding one.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>two generations, one UUID trick</h2>
+	<p>
+		The devices come in two flavours, distinguished purely by the service UUID they
+		advertise:
+	</p>
+	<table>
+		<thead>
+			<tr><th>generation</th><th>service UUID</th><th>framing</th></tr>
+		</thead>
+		<tbody>
+			<tr>
+				<td>first</td>
+				<td><code>0000fcc0-…</code></td>
+				<td>in-payload <code>[id][len][payload]</code></td>
+			</tr>
+			<tr>
+				<td>second</td>
+				<td><code>0000ff80-…</code></td>
+				<td>no header, no length, no checksum</td>
+			</tr>
+		</tbody>
+	</table>
+	<p>
+		All the deployed timers are second-generation. In that scheme the characteristic <em>is</em> the command: the low byte of the UUID is a protocol ID. The app's protocol
+		enum value maps straight onto it — protocol <code>65410</code> is <code>0xff82</code>, and so on. There is no checksum anywhere in the protocol; searching
+		the decompiled sources for XOR/CRC comes up empty.
+	</p>
+	<p>The second-generation profile, as decoded from the app:</p>
+	<table>
+		<thead>
+			<tr><th>characteristic</th><th>meaning</th></tr>
+		</thead>
+		<tbody>
+			<tr><td><code>ff81</code></td><td>4-byte device password (auth at connect)</td></tr>
+			<tr><td><code>ff82</code></td><td><strong>zone status</strong> — 14 bytes, notification-enabled</td></tr>
+			<tr><td><code>ff83</code></td><td>overall status — enabled, suspend, run-all timer, zone config</td></tr>
+			<tr><td><code>ff84</code></td><td>clock</td></tr>
+			<tr><td><code>ff85</code>–<code>ff88</code></td><td>program schedules</td></tr>
+			<tr><td><code>ff8a</code> / <code>ff8f</code></td><td>active run times (notification-enabled)</td></tr>
+			<tr><td><code>ff90</code> / <code>ff91</code></td><td>zone names</td></tr>
+			<tr><td><code>ff9e</code> / <code>ffa2</code> / <code>ffa3</code></td><td>irrigation history records</td></tr>
+			<tr><td><code>2a19</code></td><td>battery level (standard GATT, read)</td></tr>
+		</tbody>
+	</table>
+	<p>
+		Notifications are enabled during service discovery by writing the standard CCCD <code>00002902</code>. That detail matters enormously later: it means the device can <em>push</em> state changes instead of waiting to be asked.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the 14-byte status payload</h2>
+	<p>
+		Everything hinges on <code>ff82</code>. The app parses it into fourteen named fields, and
+		the layout is the difference between a bridge that works and one that quietly lies:
+	</p>
+	<pre><code>byte  0  enabled                  byte  8  zone2EnableManual      *
+byte  1  suspendWatering          byte  9  zone2EnableExtManual
+byte  2  zone1Enabled             byte 10  zone1State             <-- actual valve state
+byte  3  zone1Mode                byte 11  zone2State             <-- actual valve state
+byte  4  zone1EnableManual     *  byte 12  zone1Conflict
+byte  5  zone1EnableExtManual     byte 13  zone2Conflict
+byte  6  zone2Enabled
+byte  7  zone2Mode</code></pre>
+	<p>
+		The bridge I was replacing read zone state from bytes <strong>4 and 8</strong>. Those are
+		the <em>manual-enable flags</em> — the "I started this run by hand" markers — not the
+		valve state. The bridge happened to look correct for the one case it created itself (it
+		always starts zones manually), but it would report the wrong state for anything the
+		device started by itself: a scheduled run, or a physical button press.
+	</p>
+	<p>
+		That is a genuinely nasty class of bug, because it is invisible in exactly the situation
+		you built it for. It only shows up when the hardware does something you didn't ask it to.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>what else the app was doing that the bridge wasn't</h2>
+	<ul>
+		<li>
+			<strong>Writing a password.</strong> The app writes a 4-byte password to <code>ff81</code> on every connect. The bridge never did.
+		</li>
+		<li>
+			<strong>Subscribing to notifications.</strong> The app subscribes to <code>ff82</code>
+			(and friends) and reacts to pushes. The bridge only ever polled.
+		</li>
+		<li>
+			<strong>Holding a connection.</strong> The bridge's code had no <code>disconnect</code> call and held its peripheral in a mutex — but every single operation still ran <code>is_connected()</code> and, finding false, did a full ten-second scan →
+			match-by-address → connect → discover cycle first. In production logs, that meant a
+			complete reconnect before nearly every command. One unit logged thousands of
+			"not connected, reconnecting" cycles.
+		</li>
+	</ul>
+	<p>
+		So the picture was clear to me before I wrote a line of code: the protocol was
+		understood, the status bug was identified, and the reliability problem was
+		architectural. The next question was whether the hardware would actually cooperate —
+		which is a question you can only answer by going and poking it.
+	</p>
+
+	<p>
+		Next: taking a purpose-built probe to the live devices, and discovering that the
+		Raspberry Pi's own Bluetooth controller was going to be a recurring character.
+	</p>
+</Post>

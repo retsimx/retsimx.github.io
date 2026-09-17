@@ -1,0 +1,178 @@
+---
+import Post from '../../../layouts/Post.astro';
+import Mermaid from '../../../components/Mermaid.astro';
+---
+
+<Post title="Probing the silence" part={2} date="2026-09-17" series="rshunterbtt">
+	<p class="tagline">
+		The decompiled app told me what the protocol should do. Getting the hardware to agree
+		meant building a probe, deploying it to the same underpowered boards the real bridge
+		runs on, and recording what actually came back — including a few answers that were not
+		the ones I expected.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the probe</h2>
+	<p>
+		Rather than reason from a spec that doesn't exist, I wrote a throwaway BLE probe: a
+		small Rust binary using the same BLE library as the real bridge, cross-compiled
+		statically for the target (ARMv6, musl), copied onto the Pi hosts, and run next to a
+		full HCI capture. The probe connects, prints the raw status characteristic, subscribes
+		to notifications and prints them, and can be told to sit idle, reconnect, or request
+		connection parameters. Every run pairs the application-level view with the controller's
+		own event stream, so there is no guessing about who did what.
+	</p>
+	<p>
+		The question it existed to answer was narrow and practical: how do I make a zone query
+		come back fast enough, and reliably enough, that the voice assistant stops giving up
+		and marking the zone offline?
+	</p>
+
+	<h2><span class="anchor-hash">#</span>first result: the ground truth, and the bug confirmed</h2>
+	<p>
+		Connecting to two of the three timers returned byte-identical status payloads:
+	</p>
+	<pre><code>0000000000000000000001018080</code></pre>
+	<p>
+		Read through the layout from part 1: bytes <strong>10 and 11</strong> are <code>0x01</code> — both zones reporting active — while bytes <strong>4 and 8</strong>,
+		the manual-enable flags the old bridge was reading, are <code>0x00</code>. Same payload,
+		opposite conclusions depending on which byte you trust. That is the byte-offset bug,
+		sitting in the first capture, in black and white.
+	</p>
+	<p>
+		It also produced an immediate puzzle. Both zones "active" on an idle timer? Either the
+		device's state byte means something subtler than "watering", or the timers were mid-run.
+		That thread gets pulled properly in part 4 — and the answer is that the status byte was
+		never a boolean.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the host controller is a character in this story</h2>
+	<p>
+		The boards are Raspberry Pi Zero W units with the BCM43430A1 combo chip, and their
+		Bluetooth controllers are not reliable under load. Early captures showed the kernel
+		logging <code>hci0: Opcode 0x2005 failed: -16</code> (EBUSY) right alongside connection
+		failures. I initially read <code>0x2005</code> as "create connection". It isn't —
+		<code>0x2005</code> is <em>LE Set Random Address</em>; create-connection is <code>0x200d</code>. The host address on these boards changes between connections, and
+		setting it occasionally collides with whatever else the controller is doing.
+	</p>
+	<p>
+		The decisive observation was simpler and more annoying: one unit stopped connecting <em>even with fresh batteries</em>, and stayed that way across service restarts. A full
+		reboot of the Pi fixed it instantly. That is the signature of a wedged host controller,
+		not a dead device — and it is the reason the final design includes recovery actions that
+		reach all the way up to rebooting the host.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the baseline, and a misleading error</h2>
+	<p>An early HCI trace, straight from the controller:</p>
+	<pre><code>LE Create Connection   min 30ms  max 60ms  latency 0  supervision 3000ms
+LE Connection Complete Success, interval 60ms, latency 0, supervision 3000ms
+LE Read Remote Used Features -> Connection Failed to be Established (0x3e)
+HCI Disconnect (Reason: Remote User Terminated Connection 0x13)</code></pre>
+	<p>
+		Two lessons. First, the default connection interval is <strong>60 ms</strong> — which is
+		about to become the whole story in part 5. Second, the disconnect reason reads like the
+		device hung up. It doesn't. The host issued that disconnect itself, after the device
+		stopped answering a feature read. The stack's "terminated by local" language tells you
+		which side of <em>the host's own stack</em> generated the teardown, not which physical
+		side walked away. Read literally, it sends you hunting for device-side sleep behaviour
+		that isn't there.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>four quick tests that decided the architecture</h2>
+	<p>
+		With the basics understood, four questions had to be answered before committing to a
+		rewrite. Each got a small experiment, and each one changed the plan.
+	</p>
+
+	<h3>1. Will the device hold an idle connection? <span class="badge">PASS</span></h3>
+	<p>
+		Connect, subscribe, then do nothing at all. If the timer dropped idle links, the whole
+		persistent-connection idea was dead. It held for <strong>~38.5 minutes</strong> with no
+		disconnect event before I cut the test short to save time. The hypothesis that the device
+		immediately drops idle connections was dead instead.
+	</p>
+
+	<h3>2. Does it push state changes on its own? <span class="badge">PASS</span></h3>
+	<p>
+		Still connected, still zero requests being sent — then a physical button press on the
+		timer. The device pushed notifications, unprompted:
+	</p>
+	<pre><code>00:34:20  Notification: 0000000000010000000009010000   <- press (zone started)
+00:34:26  Notification: 0000000000000000000001010000   <- press (zone stopped)
+00:34:26  Notification: 0000000000000000000001018000   <- follow-up state</code></pre>
+	<p>
+		This is the single most useful fact about the hardware. The device narrates its own state
+		changes. A bridge that subscribes can know what the timer is doing — including runs it
+		didn't start — without polling. (The middle digit of that first payload is load-bearing,
+		and part 4 explains why.)
+	</p>
+
+	<h3>3. Will it accept a slower connection interval? <span class="badge">PASS</span></h3>
+	<p>
+		Connection interval is the lever for battery: fewer connection events per second means
+		less radio time, but each round-trip waits longer. Using the controller's connection
+		update mechanism directly, with a capture running to see what the device actually agreed
+		to:
+	</p>
+	<table>
+		<thead>
+			<tr><th>requested interval</th><th>result</th></tr>
+		</thead>
+		<tbody>
+			<tr><td>1000 ms</td><td>accepted</td></tr>
+			<tr><td>2000 ms</td><td>accepted (first attempt failed on an out-of-range supervision timeout)</td></tr>
+			<tr><td>4000 ms</td><td><strong>accepted — the BLE maximum</strong></td></tr>
+		</tbody>
+	</table>
+	<p>
+		Four seconds is the spec ceiling for a connection interval, so the device is willing to
+		go all the way; that is a 66× reduction in connection events versus the 60 ms default.
+		The first attempt at this test produced a wrong conclusion — the tool reported a timeout
+		and I wrote "device rejects updates" — before the capture showed the device had simply
+		responded <em>slowly</em>, around ten seconds later. The device is not being difficult on
+		purpose; it is just not in a hurry.
+	</p>
+
+	<h3>4. Does reconnecting restore everything? <span class="badge">PASS, with a caveat</span></h3>
+	<p>
+		Force a disconnect, reconnect, and re-subscribe. A button press then arrived correctly.
+		But the subscription itself <strong>does not survive a drop</strong> — after any
+		disconnect, the CCCD write must be redone from scratch. Recovery is a full re-run of
+		connection setup, not a resume.
+	</p>
+	<h2><span class="anchor-hash">#</span>what the battery data actually measures</h2>
+	<p>
+		The interval only matters because of battery, so I went looking for the real numbers:
+		about 120,000 battery readings, two and a half years, resampled to daily medians to
+		strip the noise, with cycle boundaries detected from the jumps back to 100% and
+		corrected for the weeks when a device sat dead before anyone swapped its cells.
+	</p>
+	<ul>
+		<li>Corrected average life: <strong>~9.5–10.2 months</strong> on two AA cells.</li>
+		<li>Typical cycle: 298–337 days; the shortest observed was about 216 days.</li>
+		<li>Several cycles ended a week or three before the batteries were actually replaced.</li>
+	</ul>
+	<p>
+		There is an important caveat underneath that average. The logger behind those numbers
+		was, in practice, <em>disconnected most of the time</em> — it connected briefly, polled,
+		and dropped. So every one of those ten months measures the <em>connect-briefly</em> pattern, not a persistent connection. The battery cost of keeping a link open at any
+		interval is still a projection; the only way to replace it with a fact is to deploy the
+		thing and watch it for a few weeks.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the verdict</h2>
+	<p>
+		Persistent connection plus notifications is technically sound: the device holds the
+		link, narrates its own state, accepts the slowest legal interval, and recovers from a
+		drop with a full re-setup. Every one of those was a gate, and every gate passed — which
+		meant the flaky production bridge could be rebuilt around the opposite architecture.
+	</p>
+	<p>
+		What I did <em>not</em> have was a measurement for the thing the rewrite was for. That
+		uncertainty comes along for the ride.
+	</p>
+
+	<p>
+		Next: the rewrite itself — one connection held open, authenticated, notification-driven,
+		and supervised by a ladder of increasingly violent recovery actions.
+	</p>
+</Post>

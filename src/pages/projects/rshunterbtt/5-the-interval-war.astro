@@ -1,0 +1,227 @@
+---
+import Post from '../../../layouts/Post.astro';
+import Mermaid from '../../../components/Mermaid.astro';
+---
+
+<Post title="The interval war" part={5} date="2026-09-17" series="rshunterbtt">
+	<p class="tagline">
+		The rewrite gave the bridge a persistent connection and a configurable connection
+		interval, and the interval is what buys battery life. Then the firmware started
+		quietly changing it back — and proving that led through two misread kernel constants,
+		a probe of the controller's own event stream, and a very long argument with a device
+		that simply wants to talk fast.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the parameter that buys battery</h2>
+	<p>
+		A BLE connection is not a stream; it is a series of short radio rendezvous, and the gap
+		between them is the <strong>connection interval</strong>. Every event costs radio time,
+		so a longer interval means less power — at the cost of latency, because a round-trip
+		has to wait for the next event. The legal range runs from 7.5 ms to 4 s, and the probing
+		in part 2 showed this device happily accepts the 4 s maximum.
+	</p>
+	<p>
+		So the bridge requested the maximum, reasoning that commands are rare and battery is
+		scarce. That reasoning is correct, and it produced a bridge that was unusable in exactly
+		the way that had started all this: a zone query took long enough for the voice
+		assistant to give up and mark the device offline, and the controls were no faster. The
+		first task was to measure the actual relationship instead of guessing at it.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>measuring it properly</h2>
+	<p>
+		The bridge logs a command's receipt and its acknowledgement, so the round-trip is
+		directly measurable. To vary the interval on a live link I used the controller's
+		own connection-update tool, with a capture running to confirm what was actually
+		applied. Same command, same host, one variable:
+	</p>
+	<table>
+		<thead>
+			<tr><th>connection interval</th><th>command → ack</th></tr>
+		</thead>
+		<tbody>
+			<tr><td>60 ms</td><td>0.50 s</td></tr>
+			<tr><td>1000 ms</td><td>~5.2 s</td></tr>
+			<tr><td>2000 ms</td><td>~12 s</td></tr>
+			<tr><td>4000 ms</td><td>~21 s</td></tr>
+		</tbody>
+	</table>
+	<p>
+		That is a clean, roughly linear relationship — latency scales with the interval, which
+		makes physical sense: a command needs a handful of GATT round-trips, and each one waits
+		for an event. The 4 s maximum really is a ~21 s command. So the interval is a genuine
+		dial between battery and responsiveness, and the interesting question becomes what
+		value to choose — not whether the dial works.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>then the numbers stopped making sense</h2>
+	<p>
+		A later session produced the opposite result: with the bridge configured for the 4 s
+		maximum, commands came back in <strong>0.28 seconds</strong>. Both measurements were
+		real. One of them was lying about the connection.
+	</p>
+	<p>
+		I ran a check designed to catch exactly this. If the link is genuinely at 4 s, a command
+		sent at a random moment has to wait for the next event — so latencies across many
+		commands should be <em>spread</em> from near-zero up to four seconds. If instead every
+		command, at every phase, comes back in ~0.3 s, the link cannot possibly be at 4 s. Ten
+		commands at deliberately uneven spacing came back flat: 0.26–0.31 s, every time. The
+		bridge <em>said</em> "negotiated 4000 ms". The link was running at roughly 50 ms.
+	</p>
+	<p>
+		The lesson landed hard and generalised to everything after it: <strong>the log line that
+		says the interval was negotiated is not evidence that the interval is in effect.</strong> The only ground truth is the controller's event stream, cross-checked against measured
+		latency.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>who is changing my interval</h2>
+	<p>
+		A full HCI capture of a fresh connection finally showed the whole argument, in order:
+	</p>
+	<pre><code>{`LE Connection Complete          ->  48 ms      host brings the link up
+LE Connection Update Complete   -> 195 ms      host applies preferred parameters
+LE Connection Update Complete   -> 1000 ms     bridge asks for its interval
+LE L2CAP: Connection Parameter Update Request  <-- the PERIPHERAL asks for fast
+LE Connection Update Complete   ->  48 ms      host honours the peripheral
+`}</code></pre>
+	<p>
+		There it is. The timer itself asks to go back to a fast interval, and BlueZ — correctly,
+		per the spec — gives the peripheral what it wants. The vendor firmware wants to be
+		responsive, the host politely agrees, and the bridge's carefully-chosen interval is gone
+		a second after it was set. The connection was never broken; it was being renegotiated
+		out from under the bridge.
+	</p>
+	<p>
+		This also explained months of inconsistency. The peripheral sends that request on its <em>first</em> connection after power-up. Reconnect without rebooting the host, and no
+		request arrives — so the bridge's interval sticks, and latency is honestly ~5 s. Reboot
+		the host, and the request comes, and the link is fast again. Same settings, opposite
+		behaviour, depending on whether the firmware had already made its point.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>the first fix: a deliberate reconnect</h2>
+	<p>
+		If the peripheral only renegotiates on its first connection, the obvious move is to give
+		it a first connection to spend, then take the second one for real. Connection setup now
+		does a small dance: connect, disconnect, connect, and only then apply the interval. On
+		the second connection the firmware has no new objection, and the interval holds.
+	</p>
+	<p>
+		It is a slightly absurd fix — deliberately dropping a connection to make the next one
+		stick — and it is not sufficient on its own. The firmware's request is intermittent, not
+		deterministic; a reconnect is not guaranteed to be free of it. Which means the bridge
+		cannot just set the interval and hope. It has to watch.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>a monitor that had never once worked</h2>
+	<p>
+		Back in the rewrite (part 3) I had given the bridge an HCI <em>monitor</em>: a raw
+		socket onto the controller's event stream, decoding a couple of event types for
+		diagnostics. The interval work needed exactly that socket — to see every <code>LE Connection Update Complete</code> and catch the moments the link drifted back
+		to fast. So the monitor got a second job: not just logging, but <em>enforcement</em>.
+	</p>
+	<p>
+		There was a small problem. It had never decoded a single event. Two constants were
+		wrong, and neither was ever noticed because the module was "only diagnostics":
+	</p>
+	<ul>
+		<li>
+			<strong>The channel number.</strong> Kernel HCI channel numbering is not stable
+			across trees. Mainline uses <code>MONITOR=3</code>; this Raspberry Pi kernel uses <code>MONITOR=2</code> and <code>CONTROL=3</code>. The code was binding channel 1
+			(<code>USER</code>), which fails outright — and a naive "fix" to channel 3 binds <em>successfully</em> to the management channel and quietly receives the wrong kind
+			of events entirely. Both failure modes look like "no data".
+		</li>
+		<li>
+			<strong>The packet-type opcode.</strong> The monitor's frame types are a separate
+			enum again (<code>EVENT=3</code>, not the intuitively "first" value), so even with
+			the right channel the decoder was reading the wrong frames.
+		</li>
+	</ul>
+	<p>
+		I found both by going to the source rather than to memory — pulling the exact kernel
+		headers for the running version and reading the enums — and by dumping raw frame bytes
+		until the format was unambiguous. Within an hour of fixing two integers, the monitor was
+		seeing the event stream it had been silently deaf to since the day it shipped.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>enforcement</h2>
+	<p>
+		With events flowing, the guard is simple: on every connection-update event, compare the
+		reported interval against the target. If it is off — the firmware won a round — re-apply
+		the target. Rate-limited so a device that argues every time cannot spin the bridge, and
+		run off-thread so a slow re-apply never stalls the monitor and makes it miss the next
+		event.
+	</p>
+	<Mermaid>{`flowchart LR
+		EV["LE Connection Update Complete<br/>(every event)"] --> CMP{"interval == target?"}
+		CMP -->|yes| IGN["ignore"]
+		CMP -->|no| RL{"within rate limit?"}
+		RL -->|yes| IGN
+		RL -->|no| RE["re-apply target interval<br/>(off-thread HCI update)"]
+		RE --> EV`}</Mermaid>
+	<p>
+		The proof is a fresh boot of each host with the guard running. Every timer did exactly
+		what the firmware wanted — reverted to 50 ms, 60 ms, 198 ms, 200 ms — and every revert
+		was caught and reversed:
+	</p>
+	<pre><code>{`interval changed to 60ms (target 1000ms); re-applying
+connection interval updated: requested 1000ms, negotiated 1000ms
+interval changed to 50ms (target 1000ms); re-applying
+connection interval updated: requested 1000ms, negotiated 1000ms`}</code></pre>
+	<p>
+		After correction, the same stop command measured 5.2 s on the wire — the interval was
+		genuinely, verifiably, in effect. And importantly, the corrections <em>settled</em>:
+		one or two per connection, then quiet. This is not a device that renegotiates forever;
+		it is a device that makes its point, and then behaves once the central has clearly and
+		repeatedly insisted.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>so what interval, in the end</h2>
+	<p>
+		With the link honest, the dial is a real choice. I settled on <strong>1000 ms</strong>:
+	</p>
+	<ul>
+		<li>~5 s command latency — slow enough to feel deliberate, fast enough not to feel broken.</li>
+		<li><strong>4× fewer</strong> connection events than the 4 s maximum.</li>
+		<li><strong>16× fewer</strong> than the firmware's preferred ~60 ms.</li>
+	</ul>
+	<p>
+		That last number is the one that matters, and it is also the one I can't fully defend
+		yet. The honest position, carried over from part 2: the firmware wants to talk at 60 ms,
+		the ~10-month battery history was measured at roughly that cadence, and the actual
+		battery cost of a persistent connection at any interval is <strong>still
+		unmeasured</strong>. 1000 ms is a defensible middle — close to the firmware's own
+		preference for responsiveness, and a real reduction in radio duty — and it is now under
+		observation in production rather than being argued about on paper.
+	</p>
+
+	<h2><span class="anchor-hash">#</span>what this one taught me</h2>
+	<ul>
+		<li>
+			<strong>A confirmation is not a fact.</strong> "Negotiated 1000 ms" was printed every
+			time, including times when the link was demonstrably at 50 ms. The system's own
+			report about itself was the least reliable evidence available.
+		</li>
+		<li>
+			<strong>Design the experiment to fail.</strong> The phase sweep — send commands at
+			random moments; a real 4 s link <em>must</em> show spread — is what settled it. More
+			of the same measurement would just have produced more contradictory averages.
+		</li>
+		<li>
+			<strong>Go to the source for encoding.</strong> I "knew" the channel numbers and
+			packet types. I was wrong about both, in ways that failed silently. The kernel
+			headers were right there.
+		</li>
+		<li>
+			<strong>Diagnostics that never worked are worse than none.</strong> The monitor sat
+			in the codebase, unused and failing, for the entire rewrite — and it happened to be
+			the exact tool the next problem needed. Unexercised code is not neutral; it is
+			unknown.
+		</li>
+	</ul>
+	<p>
+		The bridge holds its interval now, on all three timers, against a peripheral that would
+		prefer otherwise. The remaining unknown is the one the whole exercise was for — whether
+		any of this buys meaningful battery life. That answer is going to arrive slowly, as a
+		line on a graph, over the next few months.
+	</p>
+</Post>

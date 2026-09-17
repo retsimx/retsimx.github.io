@@ -103,6 +103,49 @@ export function tlsr8266PartHref(part: SeriesPart): string {
 }
 
 // -----------------------------------------------------------------------------
+// Project Tap Timer — Hunter BTT BLE Irrigation Bridge
+// -----------------------------------------------------------------------------
+
+export const hunterbttParts: SeriesPart[] = [
+	{
+		n: 1,
+		slug: 'beacons-and-blobs',
+		title: 'Beacons and blobs',
+		blurb: 'Does the tap timer broadcast its state, or only speak over GATT? Decompiling the OEM app to find out — and finding a byte-offset bug in the bridge already in production.',
+	},
+	{
+		n: 2,
+		slug: 'probing-the-silence',
+		title: 'Probing the silence',
+		blurb: 'A purpose-built BLE probe, a flaky host controller, an idle connection that refuses to drop, and a button-press that arrives uninvited.',
+	},
+	{
+		n: 3,
+		slug: 'holding-the-line',
+		title: 'Holding the line',
+		blurb: 'Rewriting the bridge around one persistent connection: notifications, device auth, and a resilience ladder for when the radio gives up.',
+	},
+	{
+		n: 4,
+		slug: 'the-zone-that-was-always-on',
+		title: 'The zone that was always on',
+		blurb: 'Six zones reported as watering, none of them wet: the status byte was never a boolean.',
+	},
+	{
+		n: 5,
+		slug: 'the-interval-war',
+		title: 'The interval war',
+		blurb: 'The firmware keeps negotiating the connection interval back to fast. Beating it took two kernel-encoding bugs, a connect/disconnect/connect dance, and an event-driven guard.',
+	},
+];
+
+export const hunterbttHub = '/projects/rshunterbtt/';
+
+export function hunterbttPartHref(part: SeriesPart): string {
+	return `${hunterbttHub}${part.n}-${part.slug}/`;
+}
+
+// -----------------------------------------------------------------------------
 // Series Registry
 // -----------------------------------------------------------------------------
 
@@ -120,6 +163,13 @@ export const seriesRegistry: Record<string, SeriesConfig> = {
 		title: 'Reverse Engineering the TLSR8266: From Vendor Blobs to LLVM and Rust',
 		parts: tlsr8266Parts,
 		partHref: tlsr8266PartHref,
+	},
+	'rshunterbtt': {
+		id: 'rshunterbtt',
+		hub: hunterbttHub,
+		title: 'Project Tap Timer — Rebuilding the Hunter BTT BLE Bridge',
+		parts: hunterbttParts,
+		partHref: hunterbttPartHref,
 	},
 };
 
